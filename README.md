@@ -149,27 +149,6 @@ DOUBAO_CHAT_MODEL=doubao-pro-32k            # 或 endpoint_id_xxx
    - 来源在线预览：证据区支持点击 `原始文件` 与 `解析全文` 链接
 4. 检索证据返回包含分块元数据：`chunk_index / page_start / page_end / chapter / source_manual`。  
 
-## 截图预览（docs/images/ark）
-下面是当前仓库已放入的截图，使用 Markdown 直接预览：
-
-### 01-enter-ark-console
-![01-enter-ark-console](docs/images/ark/01-enter-ark-console.png)
-
-### 02-create-api-key
-![02-create-api-key](docs/images/ark/02-create-api-key.png)
-
-### 04-create-endpoint-vision
-![04-create-endpoint-vision](docs/images/ark/04-create-endpoint-vision.png)
-
-### 07-env-mapping
-![07-env-mapping](docs/images/ark/07-env-mapping.png)
-
-### 08-health-check
-![08-health-check](docs/images/ark/08-health-check.png)
-
-### 09-rag-ui-success
-![09-rag-ui-success](docs/images/ark/09-rag-ui-success.png)
-
 ## API
 
 - `GET /health`  

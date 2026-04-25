@@ -1,0 +1,1431 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文档解析智能助手</title>
+  <style>
+    :root {
+      --bg: #f3f7ff;
+      --panel: #ffffff;
+      --text: #13253f;
+      --muted: #5e6f86;
+      --line: #d9e2f1;
+      --brand: #1664f5;
+      --brand-2: #0f51cc;
+      --ok: #138a5e;
+      --warn: #b77300;
+      --danger: #be3e45;
+      --hero-a: #d6e6ff;
+      --hero-b: #f4f9ff;
+      --shadow: 0 10px 28px rgba(19, 37, 63, 0.08);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--text);
+      font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background: radial-gradient(circle at 92% 8%, var(--hero-a), transparent 40%), var(--bg);
+    }
+
+    .shell {
+      max-width: 1180px;
+      margin: 28px auto;
+      padding: 0 16px 28px;
+    }
+
+    .topbar {
+      border: 1px solid var(--line);
+      background: linear-gradient(135deg, var(--hero-b), #fff);
+      border-radius: 14px;
+      padding: 16px 18px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 14px;
+      box-shadow: var(--shadow);
+    }
+
+    .title { font-size: 20px; font-weight: 700; letter-spacing: 0.2px; }
+    .sub { font-size: 13px; color: var(--muted); margin-top: 3px; }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .tab-btn {
+      border: 1px solid var(--line);
+      background: #fff;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .tab-btn:hover {
+      transform: translateY(-1px);
+      border-color: #c2d8ff;
+    }
+
+    .tab-btn.active {
+      color: #fff;
+      border-color: var(--brand);
+      background: linear-gradient(135deg, var(--brand), var(--brand-2));
+    }
+
+    .panel {
+      display: none;
+      border: 1px solid var(--line);
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 16px;
+      box-shadow: 0 6px 20px rgba(19, 37, 63, 0.04);
+    }
+
+    .panel.active { display: block; }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+    }
+
+    .field { display: grid; gap: 6px; }
+
+    .field label {
+      font-size: 13px;
+      color: var(--muted);
+      font-weight: 600;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    input[type="text"], input[type="number"], textarea, select {
+      width: 100%;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 14px;
+      color: var(--text);
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 94px;
+      resize: vertical;
+    }
+
+    input:focus, textarea:focus, select:focus {
+      border-color: #8eb3ff;
+      outline: 2px solid rgba(22, 100, 245, 0.12);
+      outline-offset: 1px;
+    }
+
+    .row {
+      margin-top: 12px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .check {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 6px 10px;
+      background: #f8fbff;
+      font-size: 14px;
+      color: var(--muted);
+    }
+
+    .btn {
+      border: 1px solid var(--brand);
+      background: var(--brand);
+      color: #fff;
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+    }
+
+    .btn:hover { background: var(--brand-2); }
+    .btn:disabled {
+      cursor: not-allowed;
+      opacity: 0.6;
+      transform: none;
+    }
+
+    .btn.secondary {
+      background: #fff;
+      color: var(--brand);
+    }
+
+    .btn.secondary:hover {
+      background: #f2f7ff;
+      color: var(--brand-2);
+      border-color: var(--brand-2);
+    }
+
+    .status {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fbfdff;
+      white-space: pre-wrap;
+      font-family: Consolas, "Courier New", monospace;
+      font-size: 12px;
+      max-height: 260px;
+      overflow: auto;
+    }
+
+    .split-preview-wrap {
+      margin-top: 14px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: #fbfdff;
+      padding: 12px;
+    }
+
+    .split-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .split-toolbar .stat {
+      margin: 0;
+    }
+
+    .split-layout {
+      display: grid;
+      grid-template-columns: minmax(300px, 0.95fr) minmax(0, 1.05fr);
+      gap: 12px;
+    }
+
+    .split-col {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+      min-height: 180px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .split-col-title {
+      font-size: 13px;
+      font-weight: 700;
+      color: #194389;
+    }
+
+    .split-list {
+      display: grid;
+      gap: 8px;
+      max-height: 420px;
+      overflow: auto;
+    }
+
+    .split-item {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+      padding: 8px;
+    }
+
+    .split-item-image {
+      width: 100%;
+      max-height: 200px;
+      object-fit: contain;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      background: #f4f8ff;
+    }
+
+    .split-item-meta {
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+      line-height: 1.45;
+      word-break: break-word;
+    }
+
+    .split-item-text {
+      font-size: 13px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .split-empty {
+      color: var(--muted);
+      font-size: 12px;
+      border: 1px dashed var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: #fcfdff;
+    }
+
+    .ok { color: var(--ok); }
+    .warn { color: var(--warn); }
+
+    .search-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.85fr);
+      gap: 14px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 12px;
+      padding: 12px;
+    }
+
+    .card-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+
+    .card-title strong { font-size: 14px; }
+    .kbd {
+      font-size: 11px;
+      color: var(--muted);
+      border: 1px solid var(--line);
+      border-bottom-width: 2px;
+      border-radius: 6px;
+      padding: 2px 6px;
+      background: #fff;
+    }
+
+    .quick {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 8px;
+    }
+
+    .chip {
+      border: 1px solid #c7d9fc;
+      background: #f5f9ff;
+      color: #13418f;
+      border-radius: 999px;
+      font-size: 12px;
+      padding: 5px 10px;
+      cursor: pointer;
+    }
+
+    .chip:hover { background: #eaf2ff; }
+
+    .stats {
+      margin: 8px 0 2px;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .stat {
+      font-size: 12px;
+      color: #194389;
+      border: 1px solid #c7d8fb;
+      background: #f5f8ff;
+      border-radius: 999px;
+      padding: 4px 9px;
+    }
+
+    .chat-history {
+      margin-top: 10px;
+      border: 1px solid var(--line);
+      background: #f9fcff;
+      border-radius: 10px;
+      padding: 10px;
+      max-height: 390px;
+      overflow: auto;
+      display: grid;
+      gap: 10px;
+    }
+
+    .turn {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+      animation: fadeIn 0.2s ease;
+    }
+
+    .turn-q {
+      font-size: 14px;
+      font-weight: 700;
+      color: #0f3c86;
+      margin-bottom: 6px;
+    }
+
+    .turn-a {
+      white-space: pre-wrap;
+      line-height: 1.55;
+      font-size: 14px;
+    }
+
+    .turn-a .ref {
+      color: #0e56d8;
+      cursor: pointer;
+      font-weight: 700;
+      border-radius: 6px;
+      padding: 0 4px;
+    }
+
+    .turn-a .ref:hover {
+      background: #e9f1ff;
+    }
+
+    .turn-meta {
+      margin-top: 7px;
+      color: var(--muted);
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .text-btn {
+      border: 0;
+      background: transparent;
+      color: #0e56d8;
+      cursor: pointer;
+      font-size: 12px;
+      padding: 2px 0;
+    }
+
+    .cite-list {
+      display: grid;
+      gap: 8px;
+      max-height: 610px;
+      overflow: auto;
+    }
+
+    .cite {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      background: #fff;
+      padding: 10px;
+      scroll-margin-top: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .cite.active {
+      border-color: #8eb3ff;
+      box-shadow: 0 0 0 2px rgba(22, 100, 245, 0.12);
+      background: #f9fcff;
+    }
+
+    .cite-meta {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      line-height: 1.5;
+    }
+
+    .cite-text {
+      font-size: 13px;
+      white-space: pre-wrap;
+      line-height: 1.5;
+    }
+
+    .source-link {
+      color: #0e56d8;
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
+
+    .source-link:hover {
+      color: #0a47b3;
+    }
+
+    .loading {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: #8aaef8;
+      animation: pulse 1s infinite ease-in-out;
+    }
+
+    .dot:nth-child(2) { animation-delay: 0.15s; }
+    .dot:nth-child(3) { animation-delay: 0.3s; }
+
+    .toast-wrap {
+      position: fixed;
+      right: 18px;
+      bottom: 20px;
+      z-index: 50;
+      display: grid;
+      gap: 8px;
+    }
+
+    .toast {
+      min-width: 240px;
+      max-width: 340px;
+      border: 1px solid var(--line);
+      border-left-width: 4px;
+      border-radius: 10px;
+      padding: 10px 12px;
+      background: #fff;
+      box-shadow: var(--shadow);
+      font-size: 13px;
+      color: var(--text);
+      animation: toastIn 0.2s ease;
+    }
+
+    .toast.ok { border-left-color: var(--ok); }
+    .toast.warn { border-left-color: var(--warn); }
+    .toast.err { border-left-color: var(--danger); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 0.35; transform: scale(0.9); }
+      50% { opacity: 1; transform: scale(1); }
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    @media (max-width: 980px) {
+      .search-layout { grid-template-columns: 1fr; }
+      .grid { grid-template-columns: 1fr; }
+      .split-layout { grid-template-columns: 1fr; }
+      .topbar { flex-direction: column; align-items: flex-start; }
+      .toast-wrap { left: 14px; right: 14px; }
+      .toast { max-width: unset; width: 100%; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <div>
+        <div class="title">文档解析智能助手</div>
+        <div class="sub">文档解析、向量入库、RAG 检索与带引用问答</div>
+      </div>
+      <div id="healthText" class="sub">正在检查服务状态...</div>
+    </header>
+
+    <section class="tabs">
+      <button class="tab-btn active" data-tab="processPanel">文档处理</button>
+      <button class="tab-btn" data-tab="configPanel">系统配置</button>
+      <button class="tab-btn" data-tab="searchPanel">RAG 问答</button>
+    </section>
+
+    <section id="processPanel" class="panel active">
+      <div class="field">
+        <label for="fileInput">上传文档（PDF / DOCX）</label>
+        <input id="fileInput" type="file" accept=".pdf,.doc,.docx" />
+      </div>
+      <div class="row">
+        <label class="check"><input id="runVision" type="checkbox" checked /> 启用 Vision 图片结构化</label>
+        <label class="check"><input id="ingestVector" type="checkbox" /> 处理后写入 Qdrant</label>
+      </div>
+      <div class="row">
+        <button id="processBtn" class="btn">开始处理</button>
+        <button id="processRebuildBtn" class="btn secondary" type="button">清空并重建索引后处理</button>
+      </div>
+      <pre id="processResult" class="status">等待操作...</pre>
+
+      <section class="split-preview-wrap">
+        <div class="card-title" style="margin-bottom: 6px;">
+          <strong>图文分离可视化</strong>
+          <span id="splitHint" class="hint">处理完成后自动加载 text_blocks / image_records 预览。</span>
+        </div>
+        <div class="split-toolbar">
+          <div class="field" style="min-width: 170px; margin: 0;">
+            <label for="splitPageFilter">页码筛选</label>
+            <select id="splitPageFilter">
+              <option value="">全部页</option>
+            </select>
+          </div>
+          <span id="splitTextCount" class="stat">文本块：0</span>
+          <span id="splitImageCount" class="stat">图片：0</span>
+          <span id="splitRawLinks" class="hint"></span>
+        </div>
+        <div class="split-layout">
+          <article class="split-col">
+            <div class="split-col-title">图片列表（带位置）</div>
+            <div id="splitImageList" class="split-list">
+              <div class="split-empty">暂无图片记录。</div>
+            </div>
+          </article>
+          <article class="split-col">
+            <div class="split-col-title">文本块列表（带坐标）</div>
+            <div id="splitTextList" class="split-list">
+              <div class="split-empty">暂无文本记录。</div>
+            </div>
+          </article>
+        </div>
+      </section>
+    </section>
+
+    <section id="configPanel" class="panel">
+      <div class="grid">
+        <div class="field"><label>APP_NAME</label><input id="APP_NAME" type="text" /></div>
+        <div class="field"><label>APP_PORT</label><input id="APP_PORT" type="number" /></div>
+        <div class="field"><label>LOG_LEVEL</label><input id="LOG_LEVEL" type="text" /></div>
+        <div class="field"><label>ARK_API_KEY</label><input id="ARK_API_KEY" type="text" /></div>
+        <div class="field"><label>ARK_BASE_URL</label><input id="ARK_BASE_URL" type="text" /></div>
+        <div class="field"><label>DOUBAO_VISION_MODEL</label><input id="DOUBAO_VISION_MODEL" type="text" /></div>
+        <div class="field"><label>DOUBAO_EMBEDDING_MODEL</label><input id="DOUBAO_EMBEDDING_MODEL" type="text" /></div>
+        <div class="field"><label>DOUBAO_CHAT_MODEL</label><input id="DOUBAO_CHAT_MODEL" type="text" /></div>
+        <div class="field"><label>QDRANT_URL</label><input id="QDRANT_URL" type="text" /></div>
+        <div class="field"><label>QDRANT_API_KEY</label><input id="QDRANT_API_KEY" type="text" /></div>
+        <div class="field"><label>QDRANT_COLLECTION</label><input id="QDRANT_COLLECTION" type="text" /></div>
+        <div class="field"><label>VECTOR_SIZE</label><input id="VECTOR_SIZE" type="number" /></div>
+        <div class="field"><label>DISTANCE_METRIC</label><input id="DISTANCE_METRIC" type="text" /></div>
+        <div class="field"><label>RAG_ANSWER_MAX_TOKENS</label><input id="RAG_ANSWER_MAX_TOKENS" type="number" /></div>
+        <div class="field"><label>CHUNK_SIZE</label><input id="CHUNK_SIZE" type="number" /></div>
+        <div class="field"><label>CHUNK_OVERLAP</label><input id="CHUNK_OVERLAP" type="number" /></div>
+      </div>
+      <div class="field" style="margin-top: 12px;">
+        <label>VISION_PROMPT_TEMPLATE</label>
+        <textarea id="VISION_PROMPT_TEMPLATE"></textarea>
+      </div>
+      <div class="row">
+        <button id="reloadConfigBtn" class="btn secondary">重新加载</button>
+        <button id="saveConfigBtn" class="btn">保存到 .env</button>
+      </div>
+      <pre id="configResult" class="status">加载中...</pre>
+    </section>
+
+    <section id="searchPanel" class="panel">
+      <div class="search-layout">
+        <div class="card">
+          <div class="card-title">
+            <strong>问答工作台</strong>
+            <span class="kbd">Ctrl/⌘ + Enter 发送</span>
+          </div>
+          <div class="hint">支持“仅检索”与“生成答案”。答案中的引用编号可点击，右侧会定位到对应证据。</div>
+
+          <div class="quick">
+            <button class="chip" data-q="UART 控制寄存器默认值是什么？">UART 默认值</button>
+            <button class="chip" data-q="请列出中断使能相关寄存器位定义。">中断位定义</button>
+            <button class="chip" data-q="DMA 通道初始化步骤是什么？">DMA 初始化</button>
+          </div>
+
+          <div class="grid">
+            <div class="field">
+              <label for="searchSourceFilename">限定手册（可选）</label>
+              <div style="display:flex; gap:8px;">
+                <input id="searchSourceFilename" type="text" list="sourceFilenameList" placeholder="例如：manual.pdf" />
+                <button id="refreshSourcesBtn" class="btn secondary" type="button" style="padding: 8px 10px; white-space: nowrap;">刷新来源</button>
+              </div>
+              <datalist id="sourceFilenameList"></datalist>
+              <div id="sourceSummary" class="hint">留空表示跨手册检索。</div>
+            </div>
+            <div class="field">
+              <label for="searchTopK">召回数量 Top K</label>
+              <input id="searchTopK" type="number" min="1" max="30" value="5" />
+            </div>
+            <div class="field">
+              <label for="searchRetrievalMode">检索模式</label>
+              <select id="searchRetrievalMode">
+                <option value="hybrid" selected>混合检索</option>
+                <option value="semantic">语义检索</option>
+                <option value="keyword">关键词检索</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="field">
+            <label for="searchQuery">问题</label>
+            <textarea id="searchQuery" placeholder="请输入你的问题，例如：SPI 的时钟极性和相位如何配置？"></textarea>
+          </div>
+
+          <div class="row">
+            <button id="searchBtn" class="btn secondary">仅检索</button>
+            <button id="answerBtn" class="btn">生成答案</button>
+            <button id="clearChatBtn" class="btn secondary">清空历史</button>
+            <span id="searchLoading" class="loading" style="display:none;">
+              <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+              正在处理...
+            </span>
+          </div>
+
+          <div class="stats">
+            <span id="statMode" class="stat">模式：-</span>
+            <span id="statHits" class="stat">命中：0</span>
+            <span id="statLatency" class="stat">耗时：-</span>
+          </div>
+
+          <pre id="searchResultMeta" class="status">等待提问...</pre>
+          <div id="chatHistory" class="chat-history"></div>
+        </div>
+
+        <aside class="card">
+          <div class="card-title">
+            <strong>来源证据</strong>
+            <button id="copyCitationsBtn" class="text-btn" type="button">复制证据摘要</button>
+          </div>
+          <div class="hint">人工核验建议：先看答案，再点引用编号定位证据片段。</div>
+          <div id="citeList" class="cite-list"></div>
+        </aside>
+      </div>
+    </section>
+  </main>
+
+  <aside id="toastWrap" class="toast-wrap"></aside>
+
+  <script>
+    const configKeys = [
+      "APP_NAME", "APP_PORT", "LOG_LEVEL", "ARK_API_KEY", "ARK_BASE_URL",
+      "DOUBAO_VISION_MODEL", "DOUBAO_EMBEDDING_MODEL", "DOUBAO_CHAT_MODEL",
+      "QDRANT_URL", "QDRANT_API_KEY", "QDRANT_COLLECTION", "VECTOR_SIZE",
+      "DISTANCE_METRIC", "VISION_PROMPT_TEMPLATE", "RAG_ANSWER_MAX_TOKENS",
+      "CHUNK_SIZE", "CHUNK_OVERLAP"
+    ];
+
+    const TAB_STORAGE_KEY = "doc_parsing_active_tab";
+    let lastCitations = [];
+    let activateTab = null;
+    let splitPreviewState = {
+      textBlocks: [],
+      imageRecords: [],
+      imagesDirUrl: "",
+      textBlocksUrl: "",
+      imageRecordsUrl: "",
+    };
+
+    function $(id) { return document.getElementById(id); }
+
+    function setStatus(el, msg) {
+      el.textContent = msg;
+    }
+
+    function escapeHtml(str) {
+      return (str || "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+
+    function basenameFromPath(path) {
+      return String(path || "").split(/[\\/]/).pop() || "";
+    }
+
+    function truncateText(text, maxLen = 320) {
+      const raw = String(text || "").trim();
+      if (raw.length <= maxLen) return raw;
+      return `${raw.slice(0, maxLen)}...`;
+    }
+
+    function formatBBox(bbox) {
+      if (!Array.isArray(bbox) || bbox.length < 4) return "-";
+      return bbox.slice(0, 4).map((n) => Number(n).toFixed(1)).join(", ");
+    }
+
+    function deriveArtifactUrl(mergedOutputUrl, fileName) {
+      const raw = String(mergedOutputUrl || "");
+      if (!raw || !fileName) return "";
+      const idx = raw.lastIndexOf("/");
+      if (idx < 0) return "";
+      return `${raw.slice(0, idx)}/${fileName}`;
+    }
+
+    function resetSplitPreview(message = "处理完成后自动加载 text_blocks / image_records 预览。") {
+      splitPreviewState = {
+        textBlocks: [],
+        imageRecords: [],
+        imagesDirUrl: "",
+        textBlocksUrl: "",
+        imageRecordsUrl: "",
+      };
+      $("splitTextCount").textContent = "文本块：0";
+      $("splitImageCount").textContent = "图片：0";
+      $("splitHint").textContent = message;
+      $("splitRawLinks").innerHTML = "";
+      $("splitPageFilter").innerHTML = `<option value="">全部页</option>`;
+      $("splitImageList").innerHTML = `<div class="split-empty">暂无图片记录。</div>`;
+      $("splitTextList").innerHTML = `<div class="split-empty">暂无文本记录。</div>`;
+    }
+
+    function updateSplitPageFilter() {
+      const pages = new Set();
+      splitPreviewState.textBlocks.forEach((item) => {
+        const p = Number(item?.page);
+        if (Number.isFinite(p)) pages.add(p);
+      });
+      splitPreviewState.imageRecords.forEach((item) => {
+        const p = Number(item?.page);
+        if (Number.isFinite(p)) pages.add(p);
+      });
+
+      const sortedPages = Array.from(pages).sort((a, b) => a - b);
+      const selector = $("splitPageFilter");
+      const current = selector.value;
+      selector.innerHTML = `<option value="">全部页</option>`;
+      sortedPages.forEach((p) => {
+        const option = document.createElement("option");
+        option.value = String(p);
+        option.textContent = `第 ${p} 页`;
+        selector.appendChild(option);
+      });
+      if (current && sortedPages.includes(Number(current))) {
+        selector.value = current;
+      }
+    }
+
+    function buildPreviewImageUrl(record) {
+      const imgName = (record && record.img_filename) ? String(record.img_filename) : basenameFromPath(record?.img_path || "");
+      if (!imgName) return "";
+      const baseUrl = String(splitPreviewState.imagesDirUrl || "").replace(/\/+$/, "");
+      if (!baseUrl) return "";
+      return encodeURI(`${baseUrl}/${imgName}`);
+    }
+
+    function renderSplitPreview() {
+      const selectedPageRaw = $("splitPageFilter").value;
+      const selectedPage = selectedPageRaw ? Number(selectedPageRaw) : null;
+      const allTextBlocks = splitPreviewState.textBlocks || [];
+      const allImageRecords = splitPreviewState.imageRecords || [];
+
+      const textBlocks = allTextBlocks.filter((item) => {
+        if (!Number.isFinite(selectedPage)) return true;
+        return Number(item?.page) === selectedPage;
+      });
+      const imageRecords = allImageRecords.filter((item) => {
+        if (!Number.isFinite(selectedPage)) return true;
+        return Number(item?.page) === selectedPage;
+      });
+
+      $("splitTextCount").textContent = `文本块：${textBlocks.length}/${allTextBlocks.length}`;
+      $("splitImageCount").textContent = `图片：${imageRecords.length}/${allImageRecords.length}`;
+
+      const imgList = $("splitImageList");
+      imgList.innerHTML = "";
+      if (!imageRecords.length) {
+        imgList.innerHTML = `<div class="split-empty">当前筛选下暂无图片记录。</div>`;
+      } else {
+        imageRecords.slice(0, 200).forEach((rec) => {
+          const card = document.createElement("article");
+          card.className = "split-item";
+
+          const imgUrl = buildPreviewImageUrl(rec);
+          if (imgUrl) {
+            const a = document.createElement("a");
+            a.href = imgUrl;
+            a.target = "_blank";
+            a.rel = "noopener noreferrer";
+            const img = document.createElement("img");
+            img.className = "split-item-image";
+            img.loading = "lazy";
+            img.src = imgUrl;
+            img.alt = rec.img_filename || "image";
+            a.appendChild(img);
+            card.appendChild(a);
+          } else {
+            const empty = document.createElement("div");
+            empty.className = "split-empty";
+            empty.textContent = "该记录没有可预览图片路径。";
+            card.appendChild(empty);
+          }
+
+          const meta = document.createElement("div");
+          meta.className = "split-item-meta";
+          meta.textContent = [
+            `page=${rec.page ?? "-"}`,
+            `img_index=${rec.img_index ?? "-"}`,
+            `occurrence=${rec.occurrence_index ?? "-"}`,
+            `bbox=[${formatBBox(rec.bbox)}]`,
+            `xref=${rec.xref ?? "-"}`,
+            `mode=${rec.extract_mode || "-"}`,
+          ].join(" | ");
+          card.appendChild(meta);
+          imgList.appendChild(card);
+        });
+      }
+
+      const textList = $("splitTextList");
+      textList.innerHTML = "";
+      if (!textBlocks.length) {
+        textList.innerHTML = `<div class="split-empty">当前筛选下暂无文本块记录。</div>`;
+      } else {
+        textBlocks.slice(0, 400).forEach((block, idx) => {
+          const card = document.createElement("article");
+          card.className = "split-item";
+
+          const meta = document.createElement("div");
+          meta.className = "split-item-meta";
+          meta.textContent = `#${idx + 1} | page=${block.page ?? "-"} | bbox=[${formatBBox(block.bbox)}]`;
+
+          const body = document.createElement("div");
+          body.className = "split-item-text";
+          body.textContent = truncateText(block.text || "");
+
+          card.appendChild(meta);
+          card.appendChild(body);
+          textList.appendChild(card);
+        });
+      }
+    }
+
+    async function loadSplitPreviewFromProcessResult(result) {
+      const mergedOutputUrl = result?.merged_output_url || "";
+      const textBlocksUrl = result?.text_blocks_url || deriveArtifactUrl(mergedOutputUrl, "text_blocks.json");
+      const imageRecordsUrl = result?.image_records_url || deriveArtifactUrl(mergedOutputUrl, "image_records.json");
+      const imagesDirUrl = result?.images_dir_url || deriveArtifactUrl(mergedOutputUrl, "images");
+
+      if (!textBlocksUrl || !imageRecordsUrl) {
+        resetSplitPreview("未找到图文分离产物路径。");
+        return;
+      }
+
+      $("splitHint").textContent = "正在加载图文分离预览...";
+
+      try {
+        const [textResp, imageResp] = await Promise.all([
+          fetch(textBlocksUrl),
+          fetch(imageRecordsUrl),
+        ]);
+        if (!textResp.ok) throw new Error(`text_blocks加载失败: HTTP ${textResp.status}`);
+        if (!imageResp.ok) throw new Error(`image_records加载失败: HTTP ${imageResp.status}`);
+
+        const textBlocks = await textResp.json();
+        const imageRecords = await imageResp.json();
+
+        splitPreviewState = {
+          textBlocks: Array.isArray(textBlocks) ? textBlocks : [],
+          imageRecords: Array.isArray(imageRecords) ? imageRecords : [],
+          imagesDirUrl: imagesDirUrl || "",
+          textBlocksUrl,
+          imageRecordsUrl,
+        };
+
+        updateSplitPageFilter();
+        renderSplitPreview();
+
+        const links = [];
+        if (splitPreviewState.textBlocksUrl) {
+          links.push(`<a class="source-link" href="${encodeURI(splitPreviewState.textBlocksUrl)}" target="_blank" rel="noopener noreferrer">text_blocks.json</a>`);
+        }
+        if (splitPreviewState.imageRecordsUrl) {
+          links.push(`<a class="source-link" href="${encodeURI(splitPreviewState.imageRecordsUrl)}" target="_blank" rel="noopener noreferrer">image_records.json</a>`);
+        }
+        $("splitRawLinks").innerHTML = links.join(" | ");
+        $("splitHint").textContent = "图文分离预览已加载，可按页筛选查看。";
+      } catch (e) {
+        resetSplitPreview(`图文分离预览加载失败：${e.message || e}`);
+        showToast("图文分离预览加载失败", "warn");
+      }
+    }
+
+    function showToast(message, level = "ok", durationMs = 2600) {
+      const wrap = $("toastWrap");
+      const toast = document.createElement("div");
+      toast.className = `toast ${level}`;
+      toast.textContent = message;
+      wrap.appendChild(toast);
+      window.setTimeout(() => {
+        toast.remove();
+      }, durationMs);
+    }
+
+    function updateStats({ mode = "-", hits = 0, latencyMs = null }) {
+      $("statMode").textContent = `模式：${mode}`;
+      $("statHits").textContent = `命中：${hits}`;
+      $("statLatency").textContent = latencyMs == null ? "耗时：-" : `耗时：${latencyMs} ms`;
+    }
+
+    function setSearchLoading(isLoading) {
+      $("searchBtn").disabled = isLoading;
+      $("answerBtn").disabled = isLoading;
+      $("clearChatBtn").disabled = isLoading;
+      $("refreshSourcesBtn").disabled = isLoading;
+      $("searchQuery").disabled = isLoading;
+      $("searchSourceFilename").disabled = isLoading;
+      $("searchTopK").disabled = isLoading;
+      $("searchRetrievalMode").disabled = isLoading;
+      $("searchLoading").style.display = isLoading ? "inline-flex" : "none";
+    }
+
+    function linkifyReferences(text) {
+      const safe = escapeHtml(text);
+      return safe.replace(/\[(\d+)\]/g, (_, n) => `<span class="ref" data-ref="${n}">[${n}]</span>`);
+    }
+
+    function appendTurn(question, answer, mode, hitCount) {
+      const host = $("chatHistory");
+      const card = document.createElement("article");
+      card.className = "turn";
+      card.innerHTML = `
+        <div class="turn-q">Q: ${escapeHtml(question)}</div>
+        <div class="turn-a">${linkifyReferences(answer)}</div>
+        <div class="turn-meta">
+          <span>mode=${escapeHtml(mode)} | hits=${hitCount}</span>
+          <button class="text-btn copy-turn-btn" type="button">复制答案</button>
+        </div>
+      `;
+      host.prepend(card);
+      host.scrollTop = 0;
+
+      card.querySelectorAll(".ref").forEach((node) => {
+        node.addEventListener("click", () => jumpToCitation(Number(node.dataset.ref)));
+      });
+
+      card.querySelector(".copy-turn-btn").addEventListener("click", async () => {
+        const plainText = answer || "";
+        try {
+          await navigator.clipboard.writeText(plainText);
+          showToast("答案已复制", "ok");
+        } catch (e) {
+          showToast("复制失败，请手动复制", "warn");
+        }
+      });
+    }
+
+    function jumpToCitation(index) {
+      const target = document.querySelector(`[data-cite-index="${index}"]`);
+      if (!target) {
+        showToast(`未找到引用 [${index}] 对应证据`, "warn");
+        return;
+      }
+      document.querySelectorAll(".cite.active").forEach((el) => el.classList.remove("active"));
+      target.classList.add("active");
+      target.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    }
+
+    function renderCitations(items) {
+      const box = $("citeList");
+      box.innerHTML = "";
+      lastCitations = items || [];
+
+      if (!items || items.length === 0) {
+        box.innerHTML = `<article class="cite"><div class="cite-meta">No citations</div><div class="cite-text">暂无可展示证据。</div></article>`;
+        return;
+      }
+
+      items.forEach((it, i) => {
+        const idx = Number(it.index || (i + 1));
+        const score = Number(it.score || 0).toFixed(4);
+        const sourceLabel = escapeHtml(it.source_filename || it.source_file || "unknown");
+        const sourceUrl = it.source_file_url ? encodeURI(it.source_file_url) : "";
+        const sourceTextUrl = it.source_text_url ? encodeURI(it.source_text_url) : "";
+        const previewLinks = [];
+        if (sourceUrl) previewLinks.push(`<a class="source-link" href="${sourceUrl}" target="_blank" rel="noopener noreferrer">原始文件</a>`);
+        if (sourceTextUrl) previewLinks.push(`<a class="source-link" href="${sourceTextUrl}" target="_blank" rel="noopener noreferrer">解析全文</a>`);
+        const chapter = it.chapter ? `, chapter=${escapeHtml(it.chapter)}` : "";
+        const pageSpan = (it.page_start != null && it.page_end != null)
+          ? `, page=${it.page_start}${it.page_start === it.page_end ? "" : `-${it.page_end}`}`
+          : "";
+        const el = document.createElement("article");
+        el.className = "cite";
+        el.dataset.citeIndex = String(idx);
+        el.innerHTML = `
+          <div class="cite-meta">
+            [${idx}] score=${score}<br />
+            source=${sourceLabel}<br />
+            chunk=${it.chunk_index ?? -1}${pageSpan}${chapter}
+            ${previewLinks.length ? `<br />preview=${previewLinks.join(" | ")}` : ""}
+          </div>
+          <div class="cite-text">${escapeHtml(it.snippet || it.text || "")}</div>
+        `;
+        box.appendChild(el);
+      });
+    }
+
+    function getSearchPayload() {
+      const query = $("searchQuery").value.trim();
+      const sourceFilename = $("searchSourceFilename").value.trim();
+      const retrievalMode = $("searchRetrievalMode")?.value || "semantic";
+      const topKRaw = Number($("searchTopK").value || "5");
+      const topK = Number.isFinite(topKRaw) ? Math.max(1, Math.min(30, topKRaw)) : 5;
+      return {
+        query,
+        top_k: topK,
+        source_filename: sourceFilename || null,
+        retrieval_mode: retrievalMode,
+      };
+    }
+
+    async function checkHealth() {
+      try {
+        const resp = await fetch("/health");
+        const data = await resp.json();
+        $("healthText").innerHTML = `<span class="ok">服务正常</span> - ${escapeHtml(data.service || "")}`;
+      } catch (e) {
+        $("healthText").innerHTML = `<span class="warn">服务不可用</span>`;
+      }
+    }
+
+    async function loadConfig() {
+      const target = $("configResult");
+      setStatus(target, "正在加载配置...");
+      try {
+        const resp = await fetch("/api/config");
+        const data = await resp.json();
+        for (const key of configKeys) {
+          const input = $(key);
+          if (input) input.value = data.values?.[key] ?? "";
+        }
+        setStatus(target, JSON.stringify(data, null, 2));
+        showToast("配置加载完成", "ok", 1800);
+      } catch (e) {
+        setStatus(target, `加载失败: ${e.message}`);
+        showToast("配置加载失败", "err");
+      }
+    }
+
+    async function loadRagSources({ quiet = false } = {}) {
+      const sourceList = $("sourceFilenameList");
+      const summary = $("sourceSummary");
+      if (summary) summary.textContent = "正在刷新手册来源...";
+      try {
+        const resp = await fetch("/api/rag/sources");
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "加载来源失败");
+
+        const items = data.sources || [];
+        sourceList.innerHTML = "";
+        const seenNames = new Set();
+        items.forEach((it) => {
+          const name = (it.source_filename || "").trim();
+          if (!name || seenNames.has(name)) return;
+          seenNames.add(name);
+          const option = document.createElement("option");
+          option.value = name;
+          sourceList.appendChild(option);
+        });
+
+        if (summary) summary.textContent = `留空表示跨手册检索。当前可选手册 ${items.length} 份。`;
+        if (!quiet) showToast(`已刷新手册来源（${items.length}）`, "ok", 1600);
+      } catch (e) {
+        if (summary) summary.textContent = "留空表示跨手册检索。来源列表加载失败。";
+        if (!quiet) showToast("加载手册来源失败", "warn");
+      }
+    }
+
+    async function saveConfig() {
+      const target = $("configResult");
+      const values = {};
+      for (const key of configKeys) {
+        const input = $(key);
+        if (input) values[key] = input.value.trim();
+      }
+      setStatus(target, "正在保存配置...");
+      try {
+        const resp = await fetch("/api/config", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ values }),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "保存失败");
+        setStatus(target, JSON.stringify(data, null, 2));
+        showToast("配置已保存并生效", "ok");
+      } catch (e) {
+        setStatus(target, `保存失败: ${e.message}`);
+        showToast("保存失败，请检查输入", "err");
+      }
+    }
+
+    async function processFile(opts = {}) {
+      const rebuildIndex = Boolean(opts?.rebuildIndex);
+      const file = $("fileInput").files?.[0];
+      const out = $("processResult");
+      if (!file) {
+        setStatus(out, "请先选择文件。");
+        showToast("请先上传 PDF / DOCX", "warn");
+        return;
+      }
+
+      if (rebuildIndex && !$("ingestVector").checked) {
+        $("ingestVector").checked = true;
+      }
+
+      resetSplitPreview("正在生成图文分离预览...");
+
+      const form = new FormData();
+      form.append("file", file);
+      form.append("run_vision", $("runVision").checked ? "true" : "false");
+      form.append("ingest_vector", $("ingestVector").checked ? "true" : "false");
+      form.append("rebuild_index", rebuildIndex ? "true" : "false");
+
+      const start = performance.now();
+      setStatus(out, rebuildIndex ? "处理中（清空并重建同名索引），请稍候..." : "处理中，请稍候...");
+      $("processBtn").disabled = true;
+      $("processRebuildBtn").disabled = true;
+      try {
+        const resp = await fetch("/process", { method: "POST", body: form });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "处理失败");
+        if (data.merged_output_url) data.merged_output_link = `${location.origin}${data.merged_output_url}`;
+        setStatus(out, JSON.stringify(data, null, 2));
+        await loadSplitPreviewFromProcessResult(data);
+        showToast("文档处理完成", "ok");
+        if (rebuildIndex) {
+          const deleted = Number(data.deleted_chunks_before_rebuild || 0);
+          showToast(`已清空同名旧索引 ${deleted} 条`, "ok");
+        }
+        if ($("ingestVector").checked && Number(data.vector_count || 0) > 0) {
+          $("searchSourceFilename").value = data.source_filename || file.name || "";
+          await loadRagSources({ quiet: true });
+          if (typeof activateTab === "function") activateTab("searchPanel");
+          setStatus(
+            $("searchResultMeta"),
+            JSON.stringify(
+              {
+                message: "已完成向量入库，可直接开始 RAG 检索/问答。",
+                source_filename: data.source_filename || file.name || "",
+                vector_count: data.vector_count || 0,
+              },
+              null,
+              2
+            )
+          );
+          showToast("已切换到 RAG 问答页，可直接检索", "ok");
+        }
+      } catch (e) {
+        setStatus(out, `处理失败: ${e.message}`);
+        showToast("文档处理失败", "err");
+      } finally {
+        const latency = Math.round(performance.now() - start);
+        updateStats({ mode: "process", hits: 0, latencyMs: latency });
+        $("processBtn").disabled = false;
+        $("processRebuildBtn").disabled = false;
+      }
+    }
+
+    async function runSearchOnly() {
+      const out = $("searchResultMeta");
+      const payload = getSearchPayload();
+      if (!payload.query) {
+        setStatus(out, "请输入问题后再检索。");
+        showToast("问题不能为空", "warn");
+        return;
+      }
+
+      setSearchLoading(true);
+      const start = performance.now();
+      setStatus(out, "正在检索...");
+      try {
+        const resp = await fetch("/api/rag/search", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "检索失败");
+
+        const cites = (data.hits || []).map((h, i) => ({
+          index: i + 1,
+          score: h.score,
+          source_filename: h.source_filename,
+          source_manual: h.source_manual,
+          source_file: h.source_file,
+          source_file_url: h.source_file_url,
+          source_text_url: h.source_text_url,
+          chunk_index: h.chunk_index,
+          page_start: h.page_start,
+          page_end: h.page_end,
+          chapter: h.chapter,
+          snippet: h.text,
+        }));
+        renderCitations(cites);
+        appendTurn(payload.query, `检索完成，共命中 ${cites.length} 条证据。`, "search_only", cites.length);
+
+        const retrievalMode = data.retrieval_mode || payload.retrieval_mode || "semantic";
+        const latency = Math.round(performance.now() - start);
+        updateStats({ mode: `search/${retrievalMode}`, hits: cites.length, latencyMs: latency });
+        setStatus(out, JSON.stringify({
+          mode: "search_only",
+          retrieval_mode: retrievalMode,
+          query: data.query,
+          top_k: data.top_k,
+          source_filename: data.source_filename,
+          hit_count: cites.length,
+          latency_ms: latency,
+        }, null, 2));
+        showToast(`检索完成，命中 ${cites.length} 条`, "ok");
+      } catch (e) {
+        setStatus(out, `检索失败: ${e.message}`);
+        showToast("检索失败", "err");
+      } finally {
+        setSearchLoading(false);
+      }
+    }
+
+    async function runAnswer() {
+      const out = $("searchResultMeta");
+      const payload = getSearchPayload();
+      if (!payload.query) {
+        setStatus(out, "请输入问题后再生成答案。");
+        showToast("问题不能为空", "warn");
+        return;
+      }
+
+      setSearchLoading(true);
+      const start = performance.now();
+      setStatus(out, "正在检索并生成答案...");
+      try {
+        const resp = await fetch("/api/rag/answer", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        const data = await resp.json();
+        if (!resp.ok) throw new Error(data.detail || "生成失败");
+
+        renderCitations(data.citations || []);
+        appendTurn(payload.query, data.answer || "未返回答案。", "answer", (data.citations || []).length);
+
+        const retrievalMode = data.retrieval_mode || payload.retrieval_mode || "semantic";
+        const latency = Math.round(performance.now() - start);
+        updateStats({ mode: `answer/${retrievalMode}`, hits: (data.citations || []).length, latencyMs: latency });
+        setStatus(out, JSON.stringify({
+          mode: "answer",
+          retrieval_mode: retrievalMode,
+          query: data.query,
+          top_k: data.top_k,
+          source_filename: data.source_filename,
+          citation_count: (data.citations || []).length,
+          latency_ms: latency,
+        }, null, 2));
+        showToast("答案已生成", "ok");
+      } catch (e) {
+        setStatus(out, `生成失败: ${e.message}`);
+        showToast("答案生成失败", "err");
+      } finally {
+        setSearchLoading(false);
+      }
+    }
+
+    function initTabs() {
+      const buttons = Array.from(document.querySelectorAll(".tab-btn"));
+      const showTab = (tabId) => {
+        buttons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tabId));
+        document.querySelectorAll(".panel").forEach((panel) => {
+          panel.classList.toggle("active", panel.id === tabId);
+        });
+        localStorage.setItem(TAB_STORAGE_KEY, tabId);
+      };
+      activateTab = showTab;
+
+      buttons.forEach((btn) => btn.addEventListener("click", () => showTab(btn.dataset.tab)));
+
+      const saved = localStorage.getItem(TAB_STORAGE_KEY);
+      if (saved && $(saved)) showTab(saved);
+    }
+
+    function initQuickQuestions() {
+      document.querySelectorAll(".chip").forEach((chip) => {
+        chip.addEventListener("click", () => {
+          $("searchQuery").value = chip.dataset.q || "";
+          $("searchQuery").focus();
+        });
+      });
+    }
+
+    function initKeyBindings() {
+      $("searchQuery").addEventListener("keydown", (e) => {
+        if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+          e.preventDefault();
+          runAnswer();
+        }
+      });
+    }
+
+    function initTextareaAutoHeight() {
+      const textareas = [$("searchQuery"), $("VISION_PROMPT_TEMPLATE")];
+      const resize = (el) => {
+        if (!el) return;
+        el.style.height = "auto";
+        el.style.height = `${Math.max(94, el.scrollHeight)}px`;
+      };
+      textareas.forEach((el) => {
+        if (!el) return;
+        el.addEventListener("input", () => resize(el));
+        resize(el);
+      });
+    }
+
+    async function copyCitationsSummary() {
+      if (!lastCitations.length) {
+        showToast("当前没有可复制的证据", "warn");
+        return;
+      }
+      const lines = lastCitations.map((c, i) => {
+        const idx = c.index || i + 1;
+        const src = c.source_filename || c.source_file || "unknown";
+        const page = (c.page_start != null && c.page_end != null) ? `${c.page_start}${c.page_start === c.page_end ? "" : `-${c.page_end}`}` : "-";
+        const chapter = c.chapter || "-";
+        return `[${idx}] source=${src}, chunk=${c.chunk_index ?? -1}, page=${page}, chapter=${chapter}, score=${Number(c.score || 0).toFixed(4)}\n${c.snippet || c.text || ""}`;
+      });
+      try {
+        await navigator.clipboard.writeText(lines.join("\n\n"));
+        showToast("证据摘要已复制", "ok");
+      } catch (e) {
+        showToast("复制失败，请手动复制", "warn");
+      }
+    }
+
+    $("reloadConfigBtn").addEventListener("click", loadConfig);
+    $("saveConfigBtn").addEventListener("click", saveConfig);
+    $("processBtn").addEventListener("click", () => processFile());
+    $("processRebuildBtn").addEventListener("click", () => processFile({ rebuildIndex: true }));
+    $("splitPageFilter").addEventListener("change", renderSplitPreview);
+    $("searchBtn").addEventListener("click", runSearchOnly);
+    $("answerBtn").addEventListener("click", runAnswer);
+    $("refreshSourcesBtn").addEventListener("click", () => loadRagSources());
+    $("copyCitationsBtn").addEventListener("click", copyCitationsSummary);
+    $("clearChatBtn").addEventListener("click", () => {
+      $("chatHistory").innerHTML = "";
+      renderCitations([]);
+      setStatus($("searchResultMeta"), "历史已清空。");
+      updateStats({ mode: "-", hits: 0, latencyMs: null });
+      showToast("已清空历史", "ok", 1400);
+    });
+
+    initTabs();
+    initQuickQuestions();
+    initKeyBindings();
+    initTextareaAutoHeight();
+    checkHealth();
+    loadConfig();
+    loadRagSources({ quiet: true });
+    resetSplitPreview();
+    renderCitations([]);
+    updateStats({ mode: "-", hits: 0, latencyMs: null });
+  </script>
+</body>
+</html>

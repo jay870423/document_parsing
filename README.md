@@ -85,12 +85,12 @@ VISION_MAX_RETRIES=3
 
 1. 登录与进入方舟  
 操作：登录火山引擎控制台，进入火山方舟（Ark）。  
-截图：`docs/images/ark/01-enter-ark-console.png`
+- ![01-enter-ark-console](docs/images/ark/01-enter-ark-console.png)
 
 2. 创建 API Key  
 操作路径：`火山方舟 -> API Key 管理 -> 创建 API Key`。  
 结果：复制新建的 Key（只展示一次）。  
-截图：`docs/images/ark/02-create-api-key.png`
+- ![02-create-api-key](docs/images/ark/02-create-api-key.png)
 
 3. 检查模型可用性  
 操作路径：`火山方舟 -> 模型列表`。  
@@ -98,18 +98,17 @@ VISION_MAX_RETRIES=3
 - `doubao-vision-pro-32k`  
 - `doubao-embedding`  
 - `doubao-pro-32k`  
-截图：`docs/images/ark/04-create-endpoint-vision.png`
+- ![04-create-endpoint-vision](docs/images/ark/04-create-endpoint-vision.png)
 
 4. 模型名不可用时创建 Endpoint  
 触发条件：调用报 `model not found` 或权限错误。  
 操作路径：`火山方舟 -> 在线推理 -> 创建推理接入点（Endpoint）`。  
 做法：分别为 Vision / Embedding / Chat 创建接入点并记录 Endpoint ID。  
-截图：  
-- `docs/images/ark/04-create-endpoint-vision.png`  
+- ![04-create-endpoint-vision](docs/images/ark/04-create-endpoint-vision.png)
 
 5. 回填当前运行配置文件（如 `.env` 或 `.env.customer`）  
 模型名可用时直接填模型名；否则填 Endpoint ID。  
-截图：`docs/images/ark/07-env-mapping.png`
+- ![07-env-mapping](docs/images/ark/07-env-mapping.png)
 
 ```env
 DOUBAO_VISION_MODEL=doubao-vision-pro-32k   # 或 endpoint_id_xxx
@@ -120,8 +119,8 @@ DOUBAO_CHAT_MODEL=doubao-pro-32k            # 或 endpoint_id_xxx
 6. 本地验证  
 操作：启动服务后访问 `GET /health`，再在前端执行一次“文档处理 + RAG 问答”。  
 截图：  
-- `docs/images/ark/08-health-check.png`  
-- `docs/images/ark/09-rag-ui-success.png`
+- ![08-health-check](docs/images/ark/08-health-check.png)
+- ![09-rag-ui-success](docs/images/ark/09-rag-ui-success.png)
 
 ### 常见报错
 
@@ -148,27 +147,6 @@ DOUBAO_CHAT_MODEL=doubao-pro-32k            # 或 endpoint_id_xxx
    - 来源筛选：可输入 `source_filename`，也可点 `刷新来源` 拉取已入库手册列表
    - 来源在线预览：证据区支持点击 `原始文件` 与 `解析全文` 链接
 4. 检索证据返回包含分块元数据：`chunk_index / page_start / page_end / chapter / source_manual`。  
-
-## 截图预览（docs/images/ark）
-下面是当前仓库中已放入的截图，使用 Markdown 直接预览：
-
-### 01-enter-ark-console
-![01-enter-ark-console](docs/images/ark/01-enter-ark-console.png)
-
-### 02-create-api-key
-![02-create-api-key](docs/images/ark/02-create-api-key.png)
-
-### 04-create-endpoint-vision
-![04-create-endpoint-vision](docs/images/ark/04-create-endpoint-vision.png)
-
-### 07-env-mapping
-![07-env-mapping](docs/images/ark/07-env-mapping.png)
-
-### 08-health-check
-![08-health-check](docs/images/ark/08-health-check.png)
-
-### 09-rag-ui-success
-![09-rag-ui-success](docs/images/ark/09-rag-ui-success.png)
 
 ## API
 

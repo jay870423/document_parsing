@@ -1,9 +1,9 @@
 workflow:
   name: document_parsing-harness
-  status: closed
-  current_stage: none
-  complexity: null
-  active_change: null
+  status: active
+  current_stage: post_release_review
+  complexity: complex
+  active_change: CHG-20261116-003-deploy-and-commit
   updated_at: 2026-11-16T00:30:00+08:00
 stages: {}
 changes:

@@ -24,9 +24,9 @@ Evidence: user request to deploy and commit
 | Gate | Status | Evidence |
 |---|---|---|
 | Local validation | passed | Uvicorn startup and health route validation |
-| Docker deployment | blocked | `docker version` reported Docker unavailable |
+| Docker deployment | passed | Remote Compose build/recreate completed on `114.132.239.186` |
 | Commit | passed | release commit `7bb79b4` and security cleanup commit `3493862`; excluded files absent |
-| Push | pending | — |
+| Push | passed | `origin/main` updated with deployment evidence |
 
 ## Rollback
 
@@ -44,4 +44,8 @@ Revert the resulting Git commit. No database or vector migration is performed.
 
 ## Residual risks
 
-Production deployment remains pending a host with Docker daemon or an explicitly configured remote deployment target. Remote history was found to contain malicious exfiltration files; those files were removed in `3493862`. Credentials potentially exposed by prior workflow execution should be rotated.
+Production deployment completed successfully on the specified Tencent Cloud host. Rollback backup is retained remotely. Remote history was found to contain malicious exfiltration files; those files were removed in `3493862`. Credentials potentially exposed by prior workflow execution should be rotated.
+
+## Post-release result
+
+Healthy; see post-release-review.md for remote health, rollback, and security evidence.

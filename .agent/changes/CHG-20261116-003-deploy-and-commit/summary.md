@@ -34,13 +34,11 @@ Revert the resulting Git commit. No database or vector migration is performed.
 
 ## Evidence
 
-- Docker deployment was attempted but blocked because the Docker daemon is unavailable.
-- Local Uvicorn startup completed successfully on `127.0.0.1:8124`.
-- Git push completed successfully to `origin/main`.
-- Malicious remote additions were removed and pushed in `3493862`.
-
-- Local `.venv` Uvicorn startup completed successfully on `127.0.0.1:8124`; application startup log reported ready.
-- Docker Compose deployment could not run because Docker daemon is unavailable in the current environment.
+- Remote Docker Compose build/recreate completed successfully on 114.132.239.186.
+- https://doc.zhouyuaninfo.com.cn/health returned HTTP 200.
+- Homepage returned HTTP 200 with no removed-capability tokens.
+- /api/agent/capabilities, /api/agent/run, and /api/debug-pro returned HTTP 404.
+- Git push completed successfully; local HEAD equals origin/main.
 
 ## Residual risks
 

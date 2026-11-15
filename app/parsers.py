@@ -84,7 +84,31 @@ class DocumentParser:
             return self._parse_pdf(src, out_dir)
         if suffix in {".docx", ".doc"}:
             return self._parse_docx(src, out_dir)
+        if suffix in {".txt", ".md", ".markdown"}:
+            return self._parse_text(src)
         raise ValueError(f"Unsupported file type: {suffix}")
+
+    def _parse_text(self, src: Path) -> DocumentParseResult:
+        text = src.read_text(encoding="utf-8", errors="ignore")
+        text_blocks: list[TextBlock] = []
+        for idx, line in enumerate(text.splitlines(), start=1):
+            if not line.strip():
+                continue
+            text_blocks.append(
+                TextBlock(
+                    page=1,
+                    bbox=[0.0, float(idx), 0.0, float(idx)],
+                    text=line,
+                )
+            )
+
+        source_type = src.suffix.lower().lstrip(".") or "txt"
+        return DocumentParseResult(
+            source_path=str(src),
+            source_type=source_type,
+            text_blocks=text_blocks,
+            image_records=[],
+        )
 
     def _parse_pdf(self, src: Path, out_dir: Path) -> DocumentParseResult:
         text_blocks: list[TextBlock] = []

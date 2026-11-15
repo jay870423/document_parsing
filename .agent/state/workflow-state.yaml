@@ -1,0 +1,13 @@
+workflow:
+  name: document_parsing-harness
+  status: active
+  current_stage: commit_ready
+  complexity: complex
+  active_change: CHG-20261116-003-deploy-and-commit
+  updated_at: 2026-11-16T00:10:00+08:00
+stages: {}
+changes:
+  - CHG-20261115-001-harness-workflow
+  - CHG-20261115-002-remove-agent-capabilities`r`n  - CHG-20261116-003-deploy-and-commit
+approvals: []
+risks: []

@@ -5,3 +5,5 @@ __pycache__/
 dist/
 build/
 artifacts/
+deploy/nginx/certs/
+data/

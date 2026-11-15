@@ -23,9 +23,13 @@ class DocumentPipeline:
         self,
         file_path: str,
         output_dir: str,
-        run_vision: bool = True,
+        run_vision: bool = False,
         ingest_vector: bool = False,
         rebuild_index: bool = False,
+        owner_user_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        api_key_id: int | None = None,
+        run_id: str | None = None,
     ) -> dict:
         out_dir = Path(output_dir)
         images_dir = out_dir / "images"
@@ -61,13 +65,19 @@ class DocumentPipeline:
         )
         merged_path = out_dir / "full_manual_text.md"
         merged_path.write_text(merged_text, encoding="utf-8")
+        txt_path = out_dir / "full_manual_text.txt"
+        txt_path.write_text(merged_text, encoding="utf-8")
 
         vector_count = 0
         deleted_chunks_before_rebuild = 0
         if ingest_vector and merged_text.strip():
             source_filename = Path(file_path).name
             if rebuild_index:
-                deleted_chunks_before_rebuild = self.indexer.remove_source_chunks(source_filename)
+                deleted_chunks_before_rebuild = self.indexer.remove_source_chunks(
+                    source_filename,
+                    user_id=owner_user_id,
+                    knowledge_base_id=knowledge_base_id,
+                )
 
             chunk_records = split_text_with_metadata(
                 merged_text,
@@ -86,6 +96,10 @@ class DocumentPipeline:
                         "source_manual": source_filename,
                         "source_type": parsed.source_type,
                         "merged_output": str(merged_path),
+                        "owner_user_id": owner_user_id,
+                        "knowledge_base_id": knowledge_base_id,
+                        "api_key_id": api_key_id,
+                        "run_id": run_id or "",
                     },
                     chunk_metadatas=[
                         {
@@ -106,7 +120,12 @@ class DocumentPipeline:
             "image_count": len(parsed.image_records),
             "text_block_count": len(parsed.text_blocks),
             "merged_output": str(merged_path),
+            "text_output": str(txt_path),
             "vector_count": vector_count,
             "rebuild_index": rebuild_index,
             "deleted_chunks_before_rebuild": deleted_chunks_before_rebuild,
+            "owner_user_id": owner_user_id,
+            "knowledge_base_id": knowledge_base_id,
+            "api_key_id": api_key_id,
+            "run_id": run_id or "",
         }

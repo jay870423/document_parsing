@@ -17,6 +17,20 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
+    database_path: str = "data/app.db"
+    bootstrap_admin_email: str = "admin@doc.zhouyuaninfo.com.cn"
+    bootstrap_admin_password: str = "Admin@123456"
+    app_sms_enabled: bool = False
+    app_sms_provider: str = "tencent"
+    app_sms_secret_id: str = ""
+    app_sms_secret_key: str = ""
+    app_sms_sdk_app_id: str = ""
+    app_sms_sign_name: str = ""
+    app_sms_template_id: str = ""
+    app_sms_code_expire_seconds: int = 300
+    app_sms_daily_phone_limit: int = 10
+    app_sms_hourly_ip_limit: int = 30
+    app_sms_wrong_lock_seconds: int = 900
 
     ark_api_key: str = Field(default="")
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"

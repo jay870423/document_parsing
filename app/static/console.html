@@ -1,0 +1,1950 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>文档解析开放平台</title>
+  <style>
+    :root {
+      --ink: #172033;
+      --muted: #667085;
+      --line: #d7deea;
+      --paper: #fbfaf7;
+      --panel: #ffffff;
+      --teal: #087f7a;
+      --teal-2: #066b67;
+      --amber: #b87514;
+      --red: #b33838;
+      --green-soft: #edf8f5;
+      --shadow: 0 18px 42px rgba(23, 32, 51, 0.09);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      color: var(--ink);
+      font-family: Georgia, "Noto Serif SC", "Microsoft YaHei", serif;
+      background:
+        linear-gradient(120deg, #f7f1df 0 24%, transparent 24%),
+        radial-gradient(circle at 86% 8%, #eef7f4 0, transparent 32%),
+        var(--paper);
+    }
+
+    .shell {
+      max-width: 1180px;
+      margin: 28px auto;
+      padding: 0 16px 40px;
+    }
+
+    header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 16px;
+      align-items: end;
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 18px;
+      margin-bottom: 18px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 34px;
+      letter-spacing: 0;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 20px;
+    }
+
+    h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.6;
+    }
+
+    .app-nav {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+      padding: 10px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.74);
+      box-shadow: 0 8px 18px rgba(23, 32, 51, 0.05);
+    }
+
+    button, .link-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      border: 1px solid var(--ink);
+      border-radius: 7px;
+      padding: 8px 13px;
+      background: var(--ink);
+      color: #fff;
+      cursor: pointer;
+      text-decoration: none;
+      font-size: 14px;
+      transition: background .15s ease, border-color .15s ease, transform .15s ease;
+    }
+
+    button:hover, .link-btn:hover {
+      transform: translateY(-1px);
+    }
+
+    button:disabled {
+      opacity: 0.62;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    button.secondary, .link-btn.secondary {
+      background: #fff;
+      color: var(--ink);
+    }
+
+    button.teal, .link-btn.primary {
+      border-color: var(--teal);
+      background: var(--teal);
+      color: #fff;
+    }
+
+    button.teal:hover, .link-btn.primary:hover {
+      background: var(--teal-2);
+      border-color: var(--teal-2);
+    }
+
+    .notice {
+      display: none;
+      margin: 0 0 14px;
+      border: 1px solid #bac4d3;
+      border-left-width: 4px;
+      border-radius: 8px;
+      padding: 10px 12px;
+      background: #fff;
+      color: var(--ink);
+      font-size: 14px;
+      box-shadow: 0 8px 20px rgba(23, 32, 51, 0.05);
+    }
+
+    .notice.ok { display: block; border-left-color: var(--teal); }
+    .notice.err { display: block; border-left-color: var(--red); }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 390px minmax(0, 1fr);
+      gap: 14px;
+      align-items: start;
+    }
+
+    .stack { display: grid; gap: 12px; }
+
+    .panel {
+      border: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 10px;
+      padding: 16px;
+      box-shadow: var(--shadow);
+    }
+
+    .muted-panel {
+      border: 1px dashed #c9d2df;
+      background: rgba(255, 255, 255, 0.6);
+      border-radius: 10px;
+      padding: 16px;
+      color: var(--muted);
+    }
+
+    .auth-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .auth-tab {
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .auth-tab.active {
+      background: var(--teal);
+      border-color: var(--teal);
+      color: #fff;
+    }
+
+    .auth-view { display: none; }
+    .auth-view.active { display: block; }
+
+    label {
+      display: block;
+      margin: 10px 0 6px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    input, select {
+      width: 100%;
+      border: 1px solid #c8d0dd;
+      border-radius: 7px;
+      padding: 11px 12px;
+      font-size: 14px;
+      background: #fff;
+      color: var(--ink);
+    }
+
+    input:focus, select:focus {
+      outline: 2px solid rgba(8, 127, 122, 0.16);
+      border-color: #6bbab4;
+    }
+
+    .password-field {
+      position: relative;
+    }
+
+    .password-field input {
+      padding-right: 46px;
+    }
+
+    .password-toggle {
+      position: absolute;
+      right: 6px;
+      top: 50%;
+      width: 34px;
+      height: 34px;
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: var(--muted);
+      box-shadow: none;
+      transform: translateY(-50%);
+    }
+
+    .password-toggle:hover {
+      background: #eef5f4;
+      color: var(--teal);
+      transform: translateY(-50%);
+    }
+
+    .password-toggle::before {
+      content: "";
+      width: 18px;
+      height: 11px;
+      border: 2px solid currentColor;
+      border-radius: 50% / 65%;
+      display: block;
+    }
+
+    .password-toggle::after {
+      content: "";
+      position: absolute;
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: currentColor;
+      left: 50%;
+      top: 50%;
+      transform: translate(-50%, -50%);
+    }
+
+    .password-toggle.visible::after {
+      width: 20px;
+      height: 2px;
+      border-radius: 999px;
+      background: currentColor;
+      transform: translate(-50%, -50%) rotate(-35deg);
+    }
+
+    .agreement-box {
+      margin-top: 12px;
+      padding: 10px 11px;
+      border: 1px solid #dbe5e4;
+      border-radius: 8px;
+      background: #f8fbfb;
+    }
+
+    .agreement-check {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: start;
+      gap: 8px;
+      margin: 0;
+      color: #475467;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .agreement-check input {
+      width: 16px;
+      height: 16px;
+      min-height: 16px;
+      margin-top: 2px;
+      accent-color: var(--teal);
+    }
+
+    .text-link {
+      min-height: 0;
+      padding: 0;
+      border: 0;
+      border-radius: 0;
+      background: transparent;
+      color: var(--teal);
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+      box-shadow: none;
+    }
+
+    .text-link:hover {
+      background: transparent;
+      color: #075d59;
+      text-decoration: underline;
+      transform: none;
+    }
+
+    .row {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+
+    .row.tight { margin-top: 10px; }
+
+    .input-row {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: 8px;
+      align-items: end;
+    }
+
+    .account-card {
+      display: grid;
+      gap: 12px;
+    }
+
+    .identity {
+      border: 1px solid #cfe2df;
+      background: var(--green-soft);
+      border-radius: 9px;
+      padding: 12px;
+    }
+
+    .identity-main {
+      font-size: 18px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      word-break: break-word;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #ccd3df;
+      border-radius: 999px;
+      padding: 4px 9px;
+      color: var(--muted);
+      font-size: 12px;
+      background: #fff;
+    }
+
+    .badge.ok {
+      color: var(--teal);
+      border-color: #94c9c5;
+    }
+
+    .account-actions {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+
+    .collapse {
+      display: none;
+      border-top: 1px solid var(--line);
+      padding-top: 12px;
+    }
+
+    .collapse.active { display: block; }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin-bottom: 14px;
+    }
+
+    .tab {
+      background: #fff;
+      color: var(--ink);
+    }
+
+    .tab.active {
+      background: var(--teal);
+      color: #fff;
+      border-color: var(--teal);
+    }
+
+    .view { display: none; }
+    .view.active { display: block; }
+
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 9px;
+      padding: 14px;
+      background: #fff;
+      min-height: 150px;
+    }
+
+    .plan-note {
+      margin: 0 0 12px;
+      border: 1px solid #cfe2df;
+      border-radius: 9px;
+      padding: 12px;
+      background: var(--green-soft);
+      color: #31514d;
+      font-size: 14px;
+      line-height: 1.65;
+    }
+
+    .plan-card {
+      display: grid;
+      gap: 10px;
+      min-height: 210px;
+      position: relative;
+    }
+
+    .plan-card.featured {
+      border-color: #94c9c5;
+      box-shadow: 0 14px 32px rgba(8, 127, 122, .10);
+    }
+
+    .plan-tag {
+      display: inline-flex;
+      width: fit-content;
+      border: 1px solid #d7deea;
+      border-radius: 999px;
+      padding: 3px 8px;
+      color: var(--muted);
+      font-size: 12px;
+      background: #fff;
+    }
+
+    .plan-card.featured .plan-tag {
+      color: var(--teal);
+      border-color: #94c9c5;
+      background: #f3fbf9;
+    }
+
+    .plan-title {
+      font-size: 17px;
+      font-weight: 800;
+      line-height: 1.25;
+    }
+
+    .price {
+      font-size: 24px;
+      color: var(--amber);
+      margin: 9px 0 8px;
+    }
+
+    .plan-desc {
+      color: #344054;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .plan-meta {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .plan-action {
+      margin-top: auto;
+      width: 100%;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    th, td {
+      border-bottom: 1px solid var(--line);
+      padding: 9px;
+      text-align: left;
+      font-size: 13px;
+      vertical-align: top;
+    }
+
+    th { background: #f1f4f8; }
+
+    pre {
+      max-height: 260px;
+      overflow: auto;
+      background: #111827;
+      color: #e8f0ff;
+      border-radius: 8px;
+      padding: 12px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .secret {
+      font-family: Consolas, "Courier New", monospace;
+      background: #fff8dd;
+      border: 1px solid #e4c56f;
+      border-radius: 7px;
+      padding: 10px;
+      word-break: break-all;
+      font-size: 13px;
+    }
+
+    .key-card {
+      display: grid;
+      gap: 10px;
+      margin-top: 10px;
+      border: 1px solid #cfe2df;
+      border-radius: 9px;
+      padding: 12px;
+      background: #f6fbfa;
+    }
+
+    .key-value {
+      font-family: Consolas, "Courier New", monospace;
+      border: 1px solid #d5dde8;
+      border-radius: 7px;
+      padding: 10px;
+      background: #fff;
+      color: var(--ink);
+      word-break: break-all;
+      font-size: 13px;
+    }
+
+    .key-meta {
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .usage-summary {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .metric {
+      border: 1px solid #d8e2df;
+      border-radius: 8px;
+      padding: 12px;
+      background: #fff;
+      min-height: 88px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
+    .metric-value {
+      margin-top: 8px;
+      color: var(--ink);
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.1;
+      word-break: break-word;
+    }
+
+    .usage-table-wrap {
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #fff;
+    }
+
+    .usage-table-wrap table {
+      border-radius: 0;
+    }
+
+    .empty-state {
+      border: 1px dashed #c9d2df;
+      border-radius: 8px;
+      padding: 16px;
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+    }
+
+    .hidden { display: none !important; }
+
+    .captcha-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(17, 24, 39, 0.58);
+      z-index: 80;
+      padding: 18px;
+      backdrop-filter: blur(2px);
+    }
+
+    .captcha-backdrop.active { display: grid; }
+
+    .agreement-backdrop {
+      position: fixed;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(17, 24, 39, 0.62);
+      z-index: 90;
+      padding: 18px;
+      backdrop-filter: blur(2px);
+    }
+
+    .agreement-backdrop.active { display: grid; }
+
+    .agreement-modal {
+      width: min(760px, 100%);
+      max-height: min(82vh, 780px);
+      display: grid;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      border: 1px solid rgba(215, 222, 234, .95);
+      border-radius: 6px;
+      background: #fff;
+      box-shadow: 0 30px 90px rgba(17, 24, 39, 0.34);
+      animation: captchaPop .18s ease-out;
+      overflow: hidden;
+    }
+
+    .agreement-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 16px 18px;
+      border-bottom: 1px solid #e7edf3;
+      background: #f8fbfb;
+    }
+
+    .agreement-head h2 {
+      margin: 0;
+      font-size: 20px;
+      line-height: 1.25;
+    }
+
+    .agreement-content {
+      min-height: 0;
+      overflow: auto;
+      padding: 18px;
+      color: #344054;
+      font-size: 14px;
+      line-height: 1.75;
+    }
+
+    .agreement-content h3 {
+      margin: 18px 0 8px;
+      color: #111827;
+      font-size: 16px;
+      line-height: 1.35;
+    }
+
+    .agreement-content p {
+      margin: 0 0 10px;
+    }
+
+    .agreement-content ul {
+      margin: 0 0 12px;
+      padding-left: 20px;
+    }
+
+    .agreement-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 14px 18px;
+      border-top: 1px solid #e7edf3;
+      background: #fff;
+    }
+
+    .captcha-modal {
+      width: min(460px, 100%);
+      border: 1px solid rgba(215, 222, 234, .9);
+      border-radius: 4px;
+      background: #fff;
+      padding: 0 10px 14px;
+      box-shadow: 0 26px 80px rgba(17, 24, 39, 0.32);
+      animation: captchaPop .18s ease-out;
+    }
+
+    @keyframes captchaPop {
+      from { opacity: 0; transform: translateY(10px) scale(.985); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+
+    .captcha-head {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 0 10px;
+    }
+
+    .captcha-kicker {
+      color: #8a94a6;
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .captcha-title {
+      margin-top: 5px;
+      color: #111827;
+      font-size: 19px;
+      font-weight: 700;
+      line-height: 1.2;
+    }
+
+    .captcha-close {
+      width: 32px;
+      height: 32px;
+      min-height: 32px;
+      padding: 0;
+      border-radius: 999px;
+      border-color: #c5cad3;
+      background: #fff;
+      color: #8b93a1;
+      font-size: 25px;
+      line-height: 1;
+    }
+
+    .captcha-stage {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1.74 / 1;
+      min-height: 206px;
+      overflow: hidden;
+      border-radius: 2px;
+      border: 1px solid #d7dde8;
+      background: #f6f8fc;
+    }
+
+    .captcha-stage svg {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .captcha-piece {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 42px;
+      height: 42px;
+      pointer-events: none;
+      filter: drop-shadow(0 7px 12px rgba(17, 24, 39, 0.34));
+      transform: translate3d(0, 0, 0);
+      transition: filter .15s ease;
+    }
+
+    .captcha-drag {
+      position: relative;
+      height: 34px;
+      margin-top: 14px;
+      border-radius: 999px;
+      background: #d1d1d1;
+      overflow: hidden;
+      user-select: none;
+      touch-action: none;
+    }
+
+    .captcha-drag-fill {
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 0;
+      background: linear-gradient(90deg, rgba(8, 127, 122, .2), rgba(8, 127, 122, .08));
+    }
+
+    .captcha-drag-text {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      color: #697383;
+      font-size: 14px;
+      pointer-events: none;
+    }
+
+    .captcha-handle {
+      position: absolute;
+      left: 0;
+      top: -4px;
+      width: 82px;
+      height: 42px;
+      min-height: 42px;
+      padding: 0;
+      border: 0;
+      border-radius: 999px;
+      background: #0b78f0;
+      color: #fff;
+      font-size: 22px;
+      letter-spacing: 4px;
+      box-shadow: 0 8px 18px rgba(11, 120, 240, .28);
+      cursor: grab;
+      transform: translate3d(0, 0, 0);
+    }
+
+    .captcha-handle:active { cursor: grabbing; }
+
+    .captcha-modal.verifying .captcha-handle {
+      background: var(--teal);
+      cursor: wait;
+    }
+
+    .captcha-tools {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      min-height: 36px;
+      margin-top: 12px;
+    }
+
+    .captcha-icon-btn {
+      width: 34px;
+      height: 34px;
+      min-height: 34px;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      color: #9aa1ac;
+      font-size: 29px;
+      line-height: 1;
+    }
+
+    .captcha-icon-btn:hover {
+      color: var(--teal);
+      transform: rotate(-18deg);
+    }
+
+    .captcha-hint {
+      color: #697383;
+      font-size: 13px;
+      text-align: right;
+    }
+
+    .captcha-hint.err { color: var(--red); }
+    .captcha-hint.ok { color: var(--teal); }
+
+    .captcha-loading {
+      position: absolute;
+      inset: 0;
+      display: none;
+      place-items: center;
+      background: rgba(255,255,255,.72);
+      color: #475467;
+      font-size: 14px;
+    }
+
+    .captcha-modal.loading .captcha-loading { display: grid; }
+
+    @media (max-width: 520px) {
+      .captcha-modal { width: min(360px, 100%); }
+      .captcha-handle { width: 70px; }
+      .captcha-title { font-size: 17px; }
+    }
+
+    @media (max-width: 980px) {
+      header, .layout { grid-template-columns: 1fr; }
+      .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .app-nav { justify-content: flex-start; }
+    }
+
+    @media (max-width: 620px) {
+      h1 { font-size: 28px; }
+      .cards { grid-template-columns: 1fr; }
+      .metric-grid { grid-template-columns: 1fr; }
+      .account-actions, .tabs, .input-row { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <header>
+      <div>
+        <h1>文档解析开放平台</h1>
+        <div class="sub">账号、订阅、API Key、调用统计与在线调试。文档处理工作台仍可从侧入口进入。</div>
+      </div>
+      <nav class="app-nav" aria-label="主导航">
+        <a class="link-btn primary" href="/app">文档处理工作台</a>
+
+        <a class="link-btn secondary" href="/docs">接口文档</a>
+      </nav>
+    </header>
+
+    <div id="notice" class="notice" role="status"></div>
+
+    <section class="layout">
+      <aside class="stack">
+        <section id="authPanel" class="panel">
+          <div id="guestAuth">
+            <h2>账号入口</h2>
+            <div class="auth-tabs" aria-label="登录注册切换">
+              <button id="loginTabBtn" class="auth-tab active" type="button">登录</button>
+              <button id="registerTabBtn" class="auth-tab" type="button">手机号注册</button>
+            </div>
+
+            <section id="loginView" class="auth-view active">
+              <label for="loginAccount">账号</label>
+              <input id="loginAccount" autocomplete="username" placeholder="手机号或邮箱" />
+              <label for="loginPassword">密码</label>
+              <div class="password-field">
+                <input id="loginPassword" type="password" autocomplete="current-password" placeholder="请输入密码" />
+                <button class="password-toggle" type="button" data-password-toggle="loginPassword" aria-label="显示密码" title="显示密码"></button>
+              </div>
+              <div class="agreement-box">
+                <label class="agreement-check" for="loginAgreementAccepted">
+                  <input id="loginAgreementAccepted" type="checkbox" />
+                  <span>我已阅读并同意 <button class="text-link" type="button" data-agreement-open="terms">《用户协议》</button> 和 <button class="text-link" type="button" data-agreement-open="privacy">《隐私政策》</button></span>
+                </label>
+              </div>
+              <div class="row tight">
+                <button id="loginBtn" class="teal" type="button">登录</button>
+              </div>
+            </section>
+
+            <section id="registerView" class="auth-view">
+              <label for="registerPhone">手机号</label>
+              <input id="registerPhone" autocomplete="tel" placeholder="请输入 11 位手机号" />
+              <label for="registerPassword">设置密码</label>
+              <div class="password-field">
+                <input id="registerPassword" type="password" autocomplete="new-password" placeholder="至少 8 位" />
+                <button class="password-toggle" type="button" data-password-toggle="registerPassword" aria-label="显示密码" title="显示密码"></button>
+              </div>
+              <label for="smsCode">短信验证码</label>
+              <div class="input-row">
+                <input id="smsCode" inputmode="numeric" placeholder="6 位验证码" />
+                <button id="sendSmsBtn" class="secondary" type="button">发送验证码</button>
+              </div>
+              <div class="agreement-box">
+                <label class="agreement-check" for="registerAgreementAccepted">
+                  <input id="registerAgreementAccepted" type="checkbox" />
+                  <span>我已阅读并同意 <button class="text-link" type="button" data-agreement-open="terms">《用户协议》</button> 和 <button class="text-link" type="button" data-agreement-open="privacy">《隐私政策》</button></span>
+                </label>
+              </div>
+              <div class="row tight">
+                <button id="registerBtn" class="teal" type="button">注册并登录</button>
+              </div>
+            </section>
+          </div>
+
+          <div id="accountPanel" class="account-card hidden">
+            <h2>账户中心</h2>
+            <div class="identity">
+              <div id="identityMain" class="identity-main">-</div>
+              <div class="row">
+                <span id="roleBadge" class="badge">用户</span>
+                <span id="subscriptionBadge" class="badge">暂无订阅</span>
+              </div>
+            </div>
+            <div class="account-actions">
+              <button id="togglePasswordBtn" class="secondary" type="button">修改密码</button>
+              <button id="logoutBtn" class="secondary" type="button">退出登录</button>
+            </div>
+            <div id="passwordPanel" class="collapse">
+              <label for="oldPassword">当前密码</label>
+              <div class="password-field">
+                <input id="oldPassword" type="password" autocomplete="current-password" placeholder="当前密码" />
+                <button class="password-toggle" type="button" data-password-toggle="oldPassword" aria-label="显示密码" title="显示密码"></button>
+              </div>
+              <label for="newPassword">新密码</label>
+              <div class="password-field">
+                <input id="newPassword" type="password" autocomplete="new-password" placeholder="至少 8 位" />
+                <button class="password-toggle" type="button" data-password-toggle="newPassword" aria-label="显示密码" title="显示密码"></button>
+              </div>
+              <div class="row tight">
+                <button id="changePasswordBtn" class="teal" type="button">保存新密码</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section id="apiKeyPanel" class="panel hidden">
+          <h2>API Key</h2>
+          <div id="apiKeyEmpty">
+            <div class="sub">生成后系统会记住这把密钥，下次登录可直接复制使用。</div>
+            <label for="keyName">密钥名称</label>
+            <input id="keyName" value="小程序接入" />
+            <div class="row tight">
+              <button id="createKeyBtn" class="teal" type="button">生成 API Key</button>
+            </div>
+          </div>
+          <div id="apiKeyReady" class="key-card hidden">
+            <div class="key-meta">当前接入密钥</div>
+            <div id="apiKeyValue" class="key-value">-</div>
+            <div class="row">
+              <button id="copyKeyBtn" class="teal" type="button">复制 API Key</button>
+              <button id="reuseKeyBtn" class="secondary" type="button">刷新显示</button>
+            </div>
+            <div id="apiKeyMeta" class="key-meta"></div>
+          </div>
+          <div id="apiKeyLegacy" class="key-card hidden">
+            <div class="key-meta">已存在历史密钥，但旧密钥无法再次明文显示。生成一次新的可复制密钥后，以后登录都能直接复制。</div>
+            <button id="createKeyLegacyBtn" class="teal" type="button">生成可复制密钥</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="stack">
+        <section class="panel">
+          <div class="tabs">
+            <button class="tab active" data-view="plansView" type="button">套餐</button>
+            <button class="tab" data-view="usageView" type="button">统计</button>
+            <button id="adminTabBtn" class="tab hidden" data-view="adminView" type="button">超管</button>
+          </div>
+
+          <section id="plansView" class="view active">
+            <div class="plan-note">注册成功即自动赠送 3 次免费体验额度，可直接试用文档解析、向量入库和知识库问答。体验满意后再选择低价套餐。</div>
+            <div id="plans" class="cards"></div>
+          </section>
+
+          <section id="usageView" class="view">
+            <div id="subBox" class="row"></div>
+            <div id="usageBox" class="usage-summary">
+              <div class="empty-state">登录后查看用量。</div>
+            </div>
+          </section>
+
+          <section id="adminView" class="view">
+            <div class="row">
+              <select id="grantUser"></select>
+              <select id="grantPlan"></select>
+              <input id="grantQuota" type="number" placeholder="自定义次数，可留空" style="max-width:180px;" />
+              <button id="grantBtn" class="teal" type="button">发放订阅</button>
+            </div>
+            <div style="margin-top:12px; overflow:auto;">
+              <table>
+                <thead><tr><th>ID</th><th>账号</th><th>角色</th><th>额度</th><th>已用</th></tr></thead>
+                <tbody id="userRows"></tbody>
+              </table>
+            </div>
+            <div id="adminStats" class="usage-summary admin-usage">
+              <div class="empty-state">超管登录后加载。</div>
+            </div>
+          </section>
+        </section>
+
+        <section id="guestEmptyState" class="muted-panel">
+          登录后可查看用量、生成 API Key，并接入文档解析 API。
+        </section>
+      </section>
+    </section>
+  </main>
+
+  <div id="captchaBackdrop" class="captcha-backdrop" aria-hidden="true">
+    <section class="captcha-modal" role="dialog" aria-modal="true" aria-labelledby="captchaTitle">
+      <div class="captcha-head">
+        <div>
+          <div class="captcha-kicker">安全验证</div>
+          <div id="captchaTitle" class="captcha-title">拖动下方滑块完成拼图</div>
+        </div>
+        <button id="captchaCloseBtn" class="captcha-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div id="captchaStage" class="captcha-stage">
+        <div class="captcha-loading">正在加载验证图片...</div>
+      </div>
+      <div id="captchaDrag" class="captcha-drag" role="slider" aria-label="拖动滑块完成拼图" aria-valuemin="0" aria-valuemax="258" aria-valuenow="0" tabindex="0">
+        <div id="captchaDragFill" class="captcha-drag-fill"></div>
+        <div id="captchaDragText" class="captcha-drag-text">按住滑块，拖动到缺口处</div>
+        <button id="captchaHandle" class="captcha-handle" type="button" aria-label="拖动滑块">|||</button>
+      </div>
+      <div class="captcha-tools">
+        <button id="captchaRefreshBtn" class="captcha-icon-btn" type="button" aria-label="刷新验证">↻</button>
+        <div id="captchaHint" class="captcha-hint">验证通过后自动发送短信验证码</div>
+      </div>
+    </section>
+  </div>
+
+  <div id="agreementBackdrop" class="agreement-backdrop" aria-hidden="true">
+    <section class="agreement-modal" role="dialog" aria-modal="true" aria-labelledby="agreementTitle">
+      <div class="agreement-head">
+        <h2 id="agreementTitle">用户协议</h2>
+        <button id="agreementCloseBtn" class="captcha-close" type="button" aria-label="关闭">×</button>
+      </div>
+      <div id="agreementContent" class="agreement-content"></div>
+      <div class="agreement-actions">
+        <button id="agreementConfirmBtn" class="teal" type="button">我已阅读</button>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let currentUser = null;
+    let plans = [];
+    let captchaState = null;
+    let captchaDragState = { active: false, startX: 0, startOffset: 0, moved: false, verifying: false };
+    let smsCountdownTimer = null;
+    const AGREEMENT_TERMS_VERSION = "terms-v2026.06.29";
+    const AGREEMENT_PRIVACY_VERSION = "privacy-v2026.06.29";
+    const AGREEMENT_DOCUMENT_HASH = "65f3ec72af63e42349cd7a0cd8bb4e533f1ee0483471620a39d9dd35d74e6280";
+    const AGREEMENT_DOCUMENTS = {
+      terms: {
+        title: "用户协议",
+        html: `
+          <p><strong>文档解析开放平台用户协议</strong></p>
+          <p>版本：terms-v2026.06.29；生效日期：2026-06-29。</p>
+          <p>本协议由海南宙元信息技术有限公司作为文档解析开放平台运营方，与通过 doc.zhouyuaninfo.com.cn、控制台、API 或其他平台授权入口注册、登录、访问、调用或使用文档解析、RAG 检索增强及相关技术服务的自然人、法人或非法人组织共同订立。前述使用主体在本协议正文中统一称为注册用户。</p>
+          <p>注册用户点击同意、完成注册、登录账号、创建或使用 API Key、提交文档、调用接口或以其他方式继续使用服务，即视为注册用户已经充分阅读、理解并接受本协议及《隐私政策》的全部内容。本协议以数据电文形式订立，自注册用户作出同意行为时成立并生效，对海南宙元信息技术有限公司与注册用户均具有法律约束力。</p>
+          <h3>一、服务内容</h3>
+          <p>平台运营方向注册用户提供文档上传、文档解析、结构化提取、接口调试、API Key 管理、用量统计、套餐订阅、RAG 向量检索及相关技术服务。具体服务能力、计费规则、调用限制、模型能力、接口路径和返回字段以平台页面、接口文档或双方另行书面约定为准。</p>
+          <p>平台运营方可基于产品迭代、合规要求、云资源、第三方服务变化等原因调整、升级、中止或终止部分服务。涉及重大不利影响的，平台运营方将在合理范围内通过页面提示、站内通知、短信、邮件或接口文档更新等方式通知注册用户。</p>
+          <h3>二、账号与 API Key</h3>
+          <p>注册用户应使用真实、合法、有效的信息注册和使用账号。注册用户应妥善保管账号、密码、短信验证码、API Key、访问令牌等身份凭证，因保管不善、主动泄露、共享账号或在不安全环境中调用接口造成的损失由注册用户自行承担。</p>
+          <p>平台运营方会将解析文档、接口调用、向量库数据、用量记录、API Key 与当前登录账号进行关联并进行用户级隔离。注册用户不得冒用他人账号、绕过访问控制、测试或攻击其他用户数据隔离边界。</p>
+          <h3>三、用户内容与数据处理</h3>
+          <p>注册用户保证上传、提交或通过接口传入的文档、图片、文本、业务数据、提示词、向量库内容等用户内容来源合法，并已取得必要授权。注册用户不得提交侵犯他人知识产权、商业秘密、个人信息权益、国家安全、公共利益或法律法规禁止处理的内容。</p>
+          <p>平台运营方仅为提供文档解析、存储、检索、计费、风控、故障排查和合规审计之目的处理用户内容。除法律法规另有规定、行政司法机关依法要求、为履行服务所必需或经注册用户另行授权外，平台运营方不会将注册用户的隔离数据提供给无关第三方。</p>
+          <h3>四、费用、套餐与调用限制</h3>
+          <p>部分服务可能按照套餐、调用次数、解析页数、Token、存储量、并发量或双方约定方式计费。注册用户应按照平台公示或双方确认的规则支付费用。已生效的套餐、赠送额度、试用额度、超额调用规则、退款规则以平台页面或双方另行协议为准。</p>
+          <p>平台运营方可为系统稳定、成本控制、安全风控和公平使用设置调用频率、文件大小、并发、超时时间、单账号额度等限制。注册用户不得通过多账号、脚本、代理、接口绕行等方式规避限制。</p>
+          <h3>五、禁止行为</h3>
+          <ul>
+            <li>上传、解析、传播违法违规、侵权、涉密、恶意代码、欺诈或违反公序良俗的内容；</li>
+            <li>对平台服务进行爬取、扫描、爆破、逆向、压测、攻击、绕过鉴权或未经授权访问；</li>
+            <li>出租、出借、转售账号、API Key、套餐额度或将服务用于违法违规业务；</li>
+            <li>删除、篡改平台服务标识、版权信息、安全策略、计费记录或审计记录；</li>
+            <li>其他违反法律法规、本协议、平台规则或损害平台运营方及第三方权益的行为。</li>
+          </ul>
+          <h3>六、知识产权</h3>
+          <p>平台软件、页面、接口文档、模型编排、商标、标识、技术方案及相关知识产权归平台运营方或合法权利人所有。未经书面许可，注册用户不得复制、改编、传播、出租、转售、反向工程或以其他方式使用平台知识产权。</p>
+          <p>注册用户保留对用户内容依法享有的权利。为提供服务之必要，注册用户授予平台运营方在服务范围内对用户内容进行存储、复制、解析、转换、向量化、检索、展示和安全审计的有限许可。</p>
+          <h3>七、服务可用性与免责声明</h3>
+          <p>平台运营方将以合理商业努力保障服务连续性和数据安全，但受互联网、云服务、模型服务、网络波动、不可抗力、第三方系统、用户配置等因素影响，平台运营方不承诺服务绝对不中断、无错误或完全满足注册用户的全部业务目的。</p>
+          <p>文档解析、结构化提取、RAG 召回和模型生成结果可能存在误差、遗漏或不确定性，注册用户应结合业务规则和人工复核自行判断。除法律法规另有强制规定外，平台运营方不对因注册用户直接将输出结果用于医疗、法律、金融、政务、资质审批等高风险决策而产生的后果承担责任。</p>
+          <h3>八、违约处理与协议终止</h3>
+          <p>如注册用户违反本协议、平台规则或法律法规，平台运营方有权根据情节采取提醒、限制调用、暂停账号、删除违法内容、终止服务、追偿损失、向主管机关报告等措施。注册用户停止使用服务或注销账号不影响已发生费用、违约责任、保密义务、知识产权条款及争议解决条款的效力。</p>
+          <h3>九、通知、变更与争议解决</h3>
+          <p>平台运营方可通过网页公告、站内通知、短信、邮件、接口文档更新等方式向注册用户发送通知。平台运营方可能因法律法规、监管要求或业务调整更新本协议；更新后注册用户继续使用服务的，视为接受更新后的协议。</p>
+          <p>本协议的订立、履行、解释和争议解决适用中华人民共和国大陆地区法律。双方因本协议产生争议的，应先友好协商；协商不成的，任何一方可向海南宙元信息技术有限公司住所地有管辖权的人民法院提起诉讼。</p>
+          <h3>十、联系方式</h3>
+          <p>注册用户对账号、服务、协议、数据或投诉处理有疑问的，可以通过平台公示的客服、邮箱或商务联系方式联系海南宙元信息技术有限公司。涉及正式法律通知的，以海南宙元信息技术有限公司依法登记或平台正式公示的联系方式为准。</p>
+        `,
+      },
+      privacy: {
+        title: "隐私政策",
+        html: `
+          <p><strong>文档解析开放平台隐私政策</strong></p>
+          <p>版本：privacy-v2026.06.29；生效日期：2026-06-29。</p>
+          <p>本政策适用于海南宙元信息技术有限公司通过文档解析开放平台、doc.zhouyuaninfo.com.cn、控制台、API、接口调试台及相关服务处理个人信息的活动。海南宙元信息技术有限公司遵循合法、正当、必要、诚信、目的明确、最小必要、公开透明和安全保障原则处理个人信息。</p>
+          <h3>一、个人信息处理者</h3>
+          <p>个人信息处理者为海南宙元信息技术有限公司。个人信息主体需要行使个人信息权利或进行投诉咨询的，可以通过平台公示的客服、邮箱或商务联系方式联系个人信息处理者。</p>
+          <h3>二、收集的信息</h3>
+          <ul>
+            <li>账号信息：手机号、邮箱、密码加密摘要、短信验证码校验结果、账号角色、订阅状态；</li>
+            <li>身份与安全信息：登录时间、IP 地址、User-Agent、Cookie、会话标识、API Key 标识、协议同意记录；</li>
+            <li>服务使用信息：接口路径、调用时间、耗时、状态码、用量、套餐、调试请求、错误日志；</li>
+            <li>用户提交内容：注册用户上传或通过 API 传入的文档、图片、文本、解析结果、向量化数据、RAG 知识库信息；</li>
+            <li>设备与网络信息：浏览器类型、操作系统、页面访问记录、异常日志、必要的诊断信息。</li>
+          </ul>
+          <h3>三、使用目的</h3>
+          <p>海南宙元信息技术有限公司处理个人信息用于账号注册与登录、短信验证、身份鉴权、API Key 管理、文档解析、向量检索、用户数据隔离、用量统计、套餐计费、客户服务、安全风控、故障排查、合规审计、协议履行和法律法规要求的其他目的。</p>
+          <h3>四、Cookie 与同类技术</h3>
+          <p>平台服务会使用 Cookie、会话存储或同类技术维持登录状态、识别会话、防范安全风险和改善产品体验。个人信息主体可以通过浏览器设置管理 Cookie，但禁用后可能无法正常登录或使用部分功能。</p>
+          <h3>五、委托处理、共享、转让与公开披露</h3>
+          <p>为实现服务目的，海南宙元信息技术有限公司可能委托云计算、短信服务、对象存储、数据库、日志分析、模型推理、向量数据库等服务商处理必要信息。平台运营方会通过合同或等效措施要求受托方按照约定目的、期限、方式和安全要求处理信息。</p>
+          <p>除取得个人信息主体单独同意、履行法定义务、保护生命健康和财产安全、维护公共利益、处理公开信息或法律法规允许的其他情形外，海南宙元信息技术有限公司不会向无关第三方共享、转让或公开披露个人信息。若发生合并、分立、解散、被收购等情形导致个人信息转移，新的接收方将被要求继续受本政策约束。</p>
+          <h3>六、保存期限与删除</h3>
+          <p>海南宙元信息技术有限公司仅在实现处理目的所必需的最短期限内保存个人信息，但法律法规、监管要求、争议解决、审计留痕、计费对账、安全风控另有要求的除外。超出保存期限后，将依法删除或匿名化处理。</p>
+          <p>用户上传文档、解析结果、向量数据和日志的保存期限以平台功能设置、套餐规则或双方约定为准。注册用户删除数据、注销账号或终止服务后，平台运营方将在合理期限内处理删除请求，但备份、审计、计费、争议处理所需数据可能依法继续保存至必要期限届满。</p>
+          <h3>七、个人信息主体权利</h3>
+          <p>在符合法律法规规定的情况下，个人信息主体有权查询、复制、更正、补充、删除个人信息，改变授权同意范围，注销账号，要求解释个人信息处理规则，或对自动化决策结果进行申诉。个人信息主体可以通过平台功能或公示联系方式提交请求，海南宙元信息技术有限公司将在合理期限内处理。</p>
+          <h3>八、未成年人保护</h3>
+          <p>平台服务主要面向具备相应民事行为能力的企业、开发者和专业用户。未成年人使用本服务前应取得监护人同意。若平台运营方发现未经监护人同意处理未成年人个人信息，将依法采取删除或其他必要措施。</p>
+          <h3>九、安全措施</h3>
+          <p>平台运营方采取身份鉴权、访问控制、加密传输、权限隔离、日志审计、备份恢复、安全监控等措施保护信息安全。尽管如此，互联网环境不存在绝对安全，注册用户也应妥善保管账号、密码和 API Key，避免在客户端、小程序前端或公开仓库暴露密钥。</p>
+          <h3>十、跨境提供</h3>
+          <p>原则上，平台运营方在中华人民共和国境内处理和存储服务所需数据。若因服务部署、模型服务、客户指定或法律允许情形需要向境外提供个人信息，平台运营方将依法履行告知、单独同意、安全评估、标准合同或认证等必要程序。</p>
+          <h3>十一、政策更新</h3>
+          <p>海南宙元信息技术有限公司可能因法律法规、监管要求、产品功能或数据处理方式变化更新本政策。重大变化将通过页面提示、公告、站内通知、短信、邮件或其他合理方式告知注册用户。注册用户继续使用服务的，视为接受更新后的政策。</p>
+        `,
+      },
+    };
+
+    function friendlyMessage(value) {
+      const text = String(value || "").trim();
+      const lower = text.toLowerCase();
+      if (!text) return "操作失败，请稍后重试";
+      if (lower.includes("single mobile number") && lower.includes("upper limit")) {
+        return "该手机号今日获取验证码次数已达上限，请明天再试或更换手机号";
+      }
+      if (lower.includes("frequency") || lower.includes("too many") || lower.includes("upper limit")) {
+        return "验证码请求过于频繁，请稍后再试";
+      }
+      if (lower.includes("signature") && (lower.includes("approved") || lower.includes("format"))) {
+        return "短信服务签名暂未通过审核，请联系客服处理";
+      }
+      if (lower.includes("template") && lower.includes("match")) {
+        return "短信服务模板配置异常，请联系客服处理";
+      }
+      if (lower.includes("slider") || lower.includes("captcha")) {
+        return "安全验证未通过，请重新拖动滑块";
+      }
+      if (/^[\x00-\x7F]+$/.test(text) && /[a-zA-Z]/.test(text)) {
+        return "操作失败，请稍后重试";
+      }
+      return text;
+    }
+
+    function messageFrom(value) {
+      if (!value) return "操作失败";
+      if (typeof value === "string") return friendlyMessage(value);
+      if (value.message) return friendlyMessage(value.message);
+      if (value.detail) {
+        if (typeof value.detail === "string") return friendlyMessage(value.detail);
+        if (Array.isArray(value.detail)) {
+          return value.detail.map((item) => {
+            if (typeof item === "string") return item;
+            const loc = Array.isArray(item.loc) ? item.loc.join(".") : "";
+            return `${loc ? `${loc}: ` : ""}${item.msg || JSON.stringify(item)}`;
+          }).join("；");
+        }
+        return JSON.stringify(value.detail);
+      }
+      try { return friendlyMessage(JSON.stringify(value)); } catch { return friendlyMessage(String(value)); }
+    }
+
+    async function api(path, options = {}) {
+      const resp = await fetch(path, {
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        credentials: "same-origin",
+        ...options,
+      });
+      let data = null;
+      try { data = await resp.json(); } catch { data = { detail: await resp.text() }; }
+      if (!resp.ok) throw new Error(messageFrom(data));
+      return data;
+    }
+
+    function showNotice(message, level = "ok") {
+      const box = $("notice");
+      box.className = `notice ${level}`;
+      box.textContent = messageFrom(message);
+      window.clearTimeout(showNotice.timer);
+      showNotice.timer = window.setTimeout(() => {
+        box.className = "notice";
+      }, 3600);
+    }
+
+    function showError(err) {
+      showNotice(err, "err");
+    }
+
+    function isPhone(value) {
+      return /^1\d{10}$/.test((value || "").trim());
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#39;");
+    }
+
+    function agreementPayload() {
+      return {
+        agreements_accepted: true,
+        terms_version: AGREEMENT_TERMS_VERSION,
+        privacy_version: AGREEMENT_PRIVACY_VERSION,
+        agreement_document_hash: AGREEMENT_DOCUMENT_HASH,
+      };
+    }
+
+    function requireAgreement(inputId) {
+      const input = $(inputId);
+      if (!input || !input.checked) {
+        input?.focus();
+        throw new Error("请先阅读并同意用户协议和隐私政策");
+      }
+    }
+
+    function updateAgreementButtons() {
+      const loginAgreement = $("loginAgreementAccepted");
+      const registerAgreement = $("registerAgreementAccepted");
+      if ($("loginBtn") && loginAgreement) $("loginBtn").disabled = !loginAgreement.checked;
+      if ($("registerBtn") && registerAgreement) $("registerBtn").disabled = !registerAgreement.checked;
+    }
+
+    function openAgreement(kind) {
+      const doc = AGREEMENT_DOCUMENTS[kind] || AGREEMENT_DOCUMENTS.terms;
+      $("agreementTitle").textContent = doc.title;
+      $("agreementContent").innerHTML = doc.html;
+      $("agreementBackdrop").classList.add("active");
+      $("agreementBackdrop").setAttribute("aria-hidden", "false");
+      $("agreementContent").scrollTop = 0;
+      $("agreementConfirmBtn").focus();
+    }
+
+    function closeAgreement() {
+      $("agreementBackdrop").classList.remove("active");
+      $("agreementBackdrop").setAttribute("aria-hidden", "true");
+    }
+
+    function initAgreementControls() {
+      $("loginAgreementAccepted")?.addEventListener("change", updateAgreementButtons);
+      $("registerAgreementAccepted")?.addEventListener("change", updateAgreementButtons);
+      document.querySelectorAll("[data-agreement-open]").forEach((button) => {
+        button.addEventListener("click", () => openAgreement(button.dataset.agreementOpen));
+      });
+      $("agreementCloseBtn").onclick = closeAgreement;
+      $("agreementConfirmBtn").onclick = closeAgreement;
+      $("agreementBackdrop").addEventListener("click", (event) => {
+        if (event.target === $("agreementBackdrop")) closeAgreement();
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.key === "Escape" && $("agreementBackdrop").classList.contains("active")) closeAgreement();
+      });
+      updateAgreementButtons();
+    }
+
+    function formatNumber(value) {
+      const num = Number(value || 0);
+      if (!Number.isFinite(num)) return "0";
+      return new Intl.NumberFormat("zh-CN").format(Math.round(num));
+    }
+
+    function formatLatency(value) {
+      const num = Number(value || 0);
+      if (!Number.isFinite(num) || num <= 0) return "-";
+      if (num >= 1000) return `${(num / 1000).toFixed(2)} s`;
+      return `${Math.round(num)} ms`;
+    }
+
+    function formatCNDate(value) {
+      if (!value) return "-";
+      const date = new Date(value);
+      if (Number.isNaN(date.getTime())) return String(value);
+      const parts = new Intl.DateTimeFormat("zh-CN", {
+        timeZone: "Asia/Shanghai",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).formatToParts(date).reduce((acc, part) => {
+        acc[part.type] = part.value;
+        return acc;
+      }, {});
+      return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+    }
+
+    function setPasswordVisible(input, button, visible) {
+      input.type = visible ? "text" : "password";
+      button.classList.toggle("visible", visible);
+      button.setAttribute("aria-label", visible ? "隐藏密码" : "显示密码");
+      button.setAttribute("title", visible ? "隐藏密码" : "显示密码");
+    }
+
+    function resetPasswordVisibility() {
+      document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+        const input = $(button.dataset.passwordToggle);
+        if (input) setPasswordVisible(input, button, false);
+      });
+    }
+
+    function initPasswordToggles() {
+      document.querySelectorAll("[data-password-toggle]").forEach((button) => {
+        const input = $(button.dataset.passwordToggle);
+        if (!input) return;
+        setPasswordVisible(input, button, false);
+        button.addEventListener("click", () => {
+          setPasswordVisible(input, button, input.type !== "text");
+          input.focus();
+        });
+      });
+    }
+
+    function renderUsageSummary(targetId, usage, emptyText = "近 30 天暂无调用记录。") {
+      const box = $(targetId);
+      if (!box) return;
+      const totals = usage?.totals || {};
+      const endpoints = Array.isArray(usage?.endpoints) ? usage.endpoints : [];
+      const calls = Number(totals.calls || 0);
+      const requests = endpoints.reduce((sum, item) => sum + Number(item.requests || 0), 0);
+      const hasData = calls > 0 || requests > 0;
+      if (!hasData) {
+        box.innerHTML = `<div class="empty-state">${escapeHtml(emptyText)}</div>`;
+        return;
+      }
+
+      const rows = endpoints.length
+        ? endpoints.map((item) => `
+          <tr>
+            <td>${escapeHtml(item.endpoint || "-")}</td>
+            <td>${formatNumber(item.requests)}</td>
+            <td>${formatNumber(item.calls)}</td>
+            <td>${formatNumber(item.input_tokens)}</td>
+            <td>${formatNumber(item.output_tokens)}</td>
+            <td>${formatLatency(item.avg_latency_ms)}</td>
+          </tr>
+        `).join("")
+        : `<tr><td colspan="6">暂无接口明细</td></tr>`;
+
+      box.innerHTML = `
+        <div class="metric-grid">
+          <div class="metric">
+            <div class="metric-label">请求次数</div>
+            <div class="metric-value">${formatNumber(requests)}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">计费调用</div>
+            <div class="metric-value">${formatNumber(calls)}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">输入 Token</div>
+            <div class="metric-value">${formatNumber(totals.input_tokens)}</div>
+          </div>
+          <div class="metric">
+            <div class="metric-label">平均耗时</div>
+            <div class="metric-value">${formatLatency(totals.avg_latency_ms)}</div>
+          </div>
+        </div>
+        <div class="usage-table-wrap">
+          <table>
+            <thead>
+              <tr><th>接口</th><th>请求</th><th>计费</th><th>输入 Token</th><th>输出 Token</th><th>平均耗时</th></tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+      `;
+    }
+
+    function setAuthMode(mode) {
+      const isLogin = mode === "login";
+      $("loginTabBtn").classList.toggle("active", isLogin);
+      $("registerTabBtn").classList.toggle("active", !isLogin);
+      $("loginView").classList.toggle("active", isLogin);
+      $("registerView").classList.toggle("active", !isLogin);
+    }
+
+    function displayAccount(user) {
+      if (!user) return "-";
+      return user.phone_masked || user.phone || user.email || `用户 #${user.id}`;
+    }
+
+    function resetAccountViews() {
+      $("guestAuth").classList.remove("hidden");
+      $("accountPanel").classList.add("hidden");
+      $("apiKeyPanel").classList.add("hidden");
+      $("guestEmptyState").classList.remove("hidden");
+      $("adminTabBtn").classList.add("hidden");
+      $("passwordPanel").classList.remove("active");
+      $("identityMain").textContent = "-";
+      $("roleBadge").textContent = "用户";
+      $("subscriptionBadge").textContent = "暂无订阅";
+      renderApiKeyPanel([]);
+      $("usageBox").innerHTML = `<div class="empty-state">登录后查看用量。</div>`;
+      $("subBox").innerHTML = "";
+      $("userRows").innerHTML = "";
+      $("adminStats").innerHTML = `<div class="empty-state">超管登录后加载。</div>`;
+      resetPasswordVisibility();
+      const activeAdmin = document.querySelector('.tab[data-view="adminView"].active');
+      if (activeAdmin) activateView("plansView");
+    }
+
+    function renderLoggedIn(data) {
+      currentUser = data.user;
+      const sub = data.subscription;
+      resetPasswordVisibility();
+      $("guestAuth").classList.add("hidden");
+      $("accountPanel").classList.remove("hidden");
+      $("apiKeyPanel").classList.remove("hidden");
+      $("guestEmptyState").classList.add("hidden");
+      $("identityMain").textContent = displayAccount(currentUser);
+      $("roleBadge").textContent = currentUser.is_admin ? "超管" : "用户";
+      $("roleBadge").classList.toggle("ok", Boolean(currentUser.is_admin));
+      $("subscriptionBadge").textContent = sub ? `${sub.plan_name}：剩余 ${sub.remaining_calls}/${sub.call_quota}` : "暂无有效订阅";
+      $("subscriptionBadge").classList.toggle("ok", Boolean(sub));
+      renderApiKeyPanel(data.api_keys || []);
+      renderUsageSummary("usageBox", data.usage, "近 30 天暂无调用记录。");
+      $("subBox").innerHTML = sub
+        ? `<span class="badge ok">${escapeHtml(sub.plan_name)}</span><span class="badge">剩余 ${formatNumber(sub.remaining_calls)}/${formatNumber(sub.call_quota)}</span><span class="badge">到期 ${formatCNDate(sub.ends_at)}</span>`
+        : `<span class="badge">暂无有效订阅</span>`;
+      $("adminTabBtn").classList.toggle("hidden", !currentUser.is_admin);
+    }
+
+    function renderApiKeyPanel(keys) {
+      const items = Array.isArray(keys) ? keys : [];
+      const copyable = items.find((item) => item.api_key && item.can_copy && item.is_active);
+      const hasLegacy = items.some((item) => !item.api_key && item.is_active);
+      const empty = $("apiKeyEmpty");
+      const ready = $("apiKeyReady");
+      const legacy = $("apiKeyLegacy");
+      if (!empty || !ready || !legacy) return;
+
+      empty.classList.toggle("hidden", Boolean(copyable) || hasLegacy);
+      ready.classList.toggle("hidden", !copyable);
+      legacy.classList.toggle("hidden", Boolean(copyable) || !hasLegacy);
+
+      if (copyable) {
+        $("apiKeyValue").textContent = copyable.api_key;
+        $("apiKeyMeta").textContent = `${copyable.name || "默认密钥"} · 前缀 ${copyable.key_prefix || "-"} · 创建于 ${formatCNDate(copyable.created_at)}`;
+      } else {
+        $("apiKeyValue").textContent = "-";
+        $("apiKeyMeta").textContent = "";
+      }
+    }
+
+    function setSmsCountdown(seconds) {
+      const btn = $("sendSmsBtn");
+      window.clearInterval(smsCountdownTimer);
+      let left = seconds;
+      btn.disabled = true;
+      btn.textContent = `${left}s 后重发`;
+      smsCountdownTimer = window.setInterval(() => {
+        left -= 1;
+        if (left <= 0) {
+          window.clearInterval(smsCountdownTimer);
+          btn.disabled = false;
+          btn.textContent = "发送验证码";
+          return;
+        }
+        btn.textContent = `${left}s 后重发`;
+      }, 1000);
+    }
+
+    async function openCaptcha() {
+      const phone = $("registerPhone").value.trim();
+      if (!isPhone(phone)) {
+        showNotice("请先输入正确的 11 位手机号", "err");
+        return;
+      }
+      $("captchaBackdrop").classList.add("active");
+      $("captchaBackdrop").setAttribute("aria-hidden", "false");
+      await loadCaptchaChallenge(phone);
+    }
+
+    function closeCaptcha() {
+      captchaState = null;
+      captchaDragState = { active: false, startX: 0, startOffset: 0, moved: false, verifying: false };
+      $("captchaBackdrop").classList.remove("active");
+      $("captchaBackdrop").setAttribute("aria-hidden", "true");
+      document.querySelector(".captcha-modal")?.classList.remove("loading", "verifying");
+    }
+
+    async function loadCaptchaChallenge(phone = $("registerPhone").value.trim()) {
+      const modal = document.querySelector(".captcha-modal");
+      modal?.classList.add("loading");
+      modal?.classList.remove("verifying");
+      $("captchaHint").className = "captcha-hint";
+      $("captchaHint").textContent = "验证通过后自动发送短信验证码";
+      setCaptchaOffset(0, false);
+      try {
+        const data = await api(`/api/auth/slider-challenge?phone=${encodeURIComponent(phone)}`, { headers: {} });
+        captchaState = data;
+        $("captchaStage").innerHTML = `${data.background_svg}<div id="captchaPiece" class="captcha-piece">${data.piece_svg}</div><div class="captcha-loading">正在加载验证图片...</div>`;
+        $("captchaDrag").setAttribute("aria-valuemax", String(data.max_offset || 258));
+        requestAnimationFrame(() => setCaptchaOffset(0, false));
+      } catch (err) {
+        showError(err);
+        closeCaptcha();
+      } finally {
+        modal?.classList.remove("loading");
+      }
+    }
+
+    function captchaMetrics() {
+      const drag = $("captchaDrag");
+      const handle = $("captchaHandle");
+      const stage = $("captchaStage");
+      const maxOffset = Number(captchaState?.max_offset || 258);
+      const sourceWidth = Number(captchaState?.width || 300);
+      const sourceHeight = Number(captchaState?.height || 150);
+      const trackMax = Math.max(1, drag.clientWidth - handle.offsetWidth);
+      const stageScaleX = stage.clientWidth / sourceWidth;
+      const stageScaleY = stage.clientHeight / sourceHeight;
+      return { maxOffset, trackMax, stageScaleX, stageScaleY };
+    }
+
+    function setCaptchaOffset(offset, updateState = true) {
+      const maxOffset = Number(captchaState?.max_offset || 258);
+      const safeOffset = Math.max(0, Math.min(maxOffset, Number(offset || 0)));
+      if (updateState && captchaState) captchaState.offset = safeOffset;
+
+      const drag = $("captchaDrag");
+      const handle = $("captchaHandle");
+      const fill = $("captchaDragFill");
+      const piece = $("captchaPiece");
+      if (!drag || !handle || !fill) return;
+
+      const metrics = captchaMetrics();
+      const handleX = Math.round((safeOffset / metrics.maxOffset) * metrics.trackMax);
+      handle.style.transform = `translate3d(${handleX}px, 0, 0)`;
+      fill.style.width = `${handleX + handle.offsetWidth / 2}px`;
+      drag.setAttribute("aria-valuenow", String(Math.round(safeOffset)));
+
+      if (piece && captchaState) {
+        const pieceTop = Number(captchaState.piece_top || 0) * metrics.stageScaleY;
+        const pieceSize = Number(captchaState.slot_size || 42) * metrics.stageScaleX;
+        piece.style.width = `${pieceSize}px`;
+        piece.style.height = `${pieceSize}px`;
+        piece.style.top = `${pieceTop}px`;
+        piece.style.transform = `translate3d(${Math.round(safeOffset * metrics.stageScaleX)}px, 0, 0)`;
+      }
+    }
+
+    async function confirmCaptchaAndSendSms() {
+      if (!captchaState || captchaDragState.verifying) return;
+      const offset = Math.round(Number(captchaState.offset || 0));
+      if (offset <= 4) {
+        $("captchaHint").className = "captcha-hint err";
+        $("captchaHint").textContent = "请拖动滑块到图片缺口处";
+        return;
+      }
+      captchaDragState.verifying = true;
+      document.querySelector(".captcha-modal")?.classList.add("verifying");
+      $("captchaHint").className = "captcha-hint";
+      $("captchaHint").textContent = "正在验证并发送短信...";
+      try {
+        const data = await api("/api/auth/sms/send", {
+          method: "POST",
+          body: JSON.stringify({
+            phone: $("registerPhone").value.trim(),
+            challenge_id: captchaState.challenge_id,
+            slider_offset: offset,
+          }),
+        });
+        $("captchaHint").className = "captcha-hint ok";
+        $("captchaHint").textContent = "验证通过";
+        closeCaptcha();
+        setSmsCountdown(Number(data.resend_after_seconds || 60));
+        const suffix = data.debug_code ? `，测试验证码：${data.debug_code}` : "";
+        showNotice(`${data.message || "验证码已发送"}${suffix}`);
+      } catch (err) {
+        $("captchaHint").className = "captcha-hint err";
+        const errText = messageFrom(err);
+        $("captchaHint").textContent = errText || "验证失败，请重新拖动";
+        captchaDragState.verifying = false;
+        document.querySelector(".captcha-modal")?.classList.remove("verifying");
+        window.setTimeout(() => loadCaptchaChallenge(), 650);
+      }
+    }
+
+    async function loadPlans() {
+      const data = await api("/api/billing/plans");
+      plans = data.plans || [];
+      const planCopy = {
+        free_trial: {
+          tag: "注册赠送",
+          desc: "适合首次体验文档解析、知识库入库和 RAG 问答，不需要先付费。",
+        },
+        personal_light: {
+          tag: "轻量个人",
+          desc: "适合偶尔处理合同、课件、说明书和资料整理的个人用户。",
+        },
+        personal_standard: {
+          tag: "推荐",
+          desc: "适合稳定使用知识库问答、每周批量解析文档的个人或小团队。",
+        },
+        personal_pro: {
+          tag: "重度使用",
+          desc: "适合高频解析、批量入库、持续调用 API 的专业用户。",
+        },
+      };
+      const periodText = { trial: "注册后赠送", month: "月付", package: "次卡", quarter: "季度", year: "年度" };
+      $("plans").innerHTML = plans.map((p) => `
+        <article class="card plan-card ${p.code === "personal_standard" ? "featured" : ""}">
+          <span class="plan-tag">${planCopy[p.code]?.tag || "套餐"}</span>
+          <div class="plan-title">${p.name}</div>
+          <div class="price">${Number(p.price_cents) === 0 ? "免费" : `￥${p.price_yuan}`}</div>
+          <div class="plan-desc">${planCopy[p.code]?.desc || "适合按需使用文档解析和知识库问答。"}</div>
+          <div class="plan-meta">
+            <span>包含调用：${p.included_calls} 次</span>
+            <span>周期：${periodText[p.billing_period] || p.billing_period}</span>
+            <span>${Number(p.price_cents) === 0 ? "注册后自动到账" : `约 ￥${(Number(p.price_cents) / 100 / Math.max(1, Number(p.included_calls))).toFixed(2)} / 次`}</span>
+          </div>
+          <button class="plan-action ${Number(p.price_cents) === 0 ? "secondary" : "teal"}" type="button" data-plan-code="${p.code}" ${Number(p.price_cents) === 0 ? "disabled" : ""}>${Number(p.price_cents) === 0 ? "注册后自动赠送" : "申请开通"}</button>
+        </article>
+      `).join("");
+      document.querySelectorAll(".plan-action[data-plan-code]").forEach((button) => {
+        button.addEventListener("click", () => createPurchaseIntent(button.dataset.planCode, button));
+      });
+      $("grantPlan").innerHTML = plans.map((p) => `<option value="${p.code}">${p.name}</option>`).join("");
+    }
+
+    async function createPurchaseIntent(planCode, button) {
+      if (!planCode || button.disabled) return;
+      button.disabled = true;
+      const oldText = button.textContent;
+      button.textContent = "提交中...";
+      try {
+        const data = await api("/api/billing/purchase-intents", {
+          method: "POST",
+          body: JSON.stringify({ plan_code: planCode }),
+        });
+        showNotice(data.message || "开通申请已提交");
+      } catch (err) {
+        showError(err);
+      } finally {
+        button.disabled = false;
+        button.textContent = oldText;
+      }
+    }
+
+    async function loadMe() {
+      try {
+        const data = await api("/api/auth/me");
+        renderLoggedIn(data);
+        if (data.user?.is_admin) await loadAdmin();
+      } catch {
+        currentUser = null;
+        resetAccountViews();
+      }
+    }
+
+    async function loadAdmin() {
+      const users = await api("/api/admin/users");
+      $("grantUser").innerHTML = users.users.map((u) => `<option value="${u.id}">#${u.id} ${u.phone_masked || u.email || u.phone}</option>`).join("");
+      $("userRows").innerHTML = users.users.map((u) => `
+        <tr>
+          <td>${u.id}</td>
+          <td>${u.phone_masked || u.email || u.phone || "-"}</td>
+          <td>${u.is_admin ? "超管" : "用户"}</td>
+          <td>${u.total_quota}</td>
+          <td>${u.total_used}</td>
+        </tr>
+      `).join("");
+      const stats = await api("/api/admin/stats");
+      renderUsageSummary("adminStats", stats, "近 30 天暂无平台调用记录。");
+    }
+
+    function activateView(viewId) {
+      document.querySelectorAll(".tab").forEach((tab) => tab.classList.toggle("active", tab.dataset.view === viewId));
+      document.querySelectorAll(".view").forEach((view) => view.classList.toggle("active", view.id === viewId));
+    }
+
+    $("loginTabBtn").onclick = () => setAuthMode("login");
+    $("registerTabBtn").onclick = () => setAuthMode("register");
+
+    $("loginBtn").onclick = async () => {
+      try {
+        const account = $("loginAccount").value.trim();
+        if (!account) throw new Error("请输入手机号或邮箱");
+        requireAgreement("loginAgreementAccepted");
+        await api("/api/auth/login", {
+          method: "POST",
+          body: JSON.stringify({
+            email: account,
+            password: $("loginPassword").value,
+            ...agreementPayload(),
+          }),
+        });
+        await loadMe();
+        showNotice("登录成功");
+      } catch (err) {
+        showError(err);
+      }
+    };
+
+    $("registerBtn").onclick = async () => {
+      try {
+        const phone = $("registerPhone").value.trim();
+        if (!isPhone(phone)) throw new Error("请输入正确的 11 位手机号");
+        requireAgreement("registerAgreementAccepted");
+        await api("/api/auth/register-phone", {
+          method: "POST",
+          body: JSON.stringify({
+            phone,
+            sms_code: $("smsCode").value.trim(),
+            password: $("registerPassword").value,
+            ...agreementPayload(),
+          }),
+        });
+        await loadMe();
+        showNotice("注册成功，已自动登录");
+      } catch (err) {
+        showError(err);
+      }
+    };
+
+    $("sendSmsBtn").onclick = openCaptcha;
+    $("captchaCloseBtn").onclick = closeCaptcha;
+    $("captchaRefreshBtn").onclick = () => loadCaptchaChallenge();
+
+    function startCaptchaDrag(event) {
+      if (!captchaState || captchaDragState.verifying) return;
+      const pointX = event.clientX ?? event.touches?.[0]?.clientX;
+      if (pointX == null) return;
+      captchaDragState.active = true;
+      captchaDragState.startX = pointX;
+      captchaDragState.startOffset = Number(captchaState.offset || 0);
+      captchaDragState.moved = false;
+      $("captchaHandle").setPointerCapture?.(event.pointerId);
+      event.preventDefault();
+    }
+
+    function moveCaptchaDrag(event) {
+      if (!captchaDragState.active || !captchaState || captchaDragState.verifying) return;
+      const pointX = event.clientX ?? event.touches?.[0]?.clientX;
+      if (pointX == null) return;
+      const metrics = captchaMetrics();
+      const deltaPx = pointX - captchaDragState.startX;
+      if (Math.abs(deltaPx) > 2) captchaDragState.moved = true;
+      const nextOffset = captchaDragState.startOffset + (deltaPx / metrics.trackMax) * metrics.maxOffset;
+      setCaptchaOffset(nextOffset);
+      event.preventDefault();
+    }
+
+    function endCaptchaDrag(event) {
+      if (!captchaDragState.active) return;
+      captchaDragState.active = false;
+      if (captchaDragState.moved) confirmCaptchaAndSendSms();
+      event.preventDefault();
+    }
+
+    $("captchaHandle").addEventListener("pointerdown", startCaptchaDrag);
+    $("captchaDrag").addEventListener("pointerdown", (event) => {
+      if (event.target === $("captchaHandle")) return;
+      if (!captchaState || captchaDragState.verifying) return;
+      const metrics = captchaMetrics();
+      const rect = $("captchaDrag").getBoundingClientRect();
+      const centerX = Number(event.clientX || 0) - rect.left - $("captchaHandle").offsetWidth / 2;
+      setCaptchaOffset((centerX / metrics.trackMax) * metrics.maxOffset);
+      startCaptchaDrag(event);
+    });
+    window.addEventListener("pointermove", moveCaptchaDrag);
+    window.addEventListener("pointerup", endCaptchaDrag);
+    $("captchaDrag").addEventListener("keydown", (event) => {
+      if (!captchaState || captchaDragState.verifying) return;
+      const current = Number(captchaState.offset || 0);
+      if (event.key === "ArrowLeft") {
+        setCaptchaOffset(current - 4);
+        event.preventDefault();
+      } else if (event.key === "ArrowRight") {
+        setCaptchaOffset(current + 4);
+        event.preventDefault();
+      } else if (event.key === "Enter" || event.key === " ") {
+        confirmCaptchaAndSendSms();
+        event.preventDefault();
+      }
+    });
+    window.addEventListener("resize", () => {
+      if (captchaState) setCaptchaOffset(Number(captchaState.offset || 0), false);
+    });
+
+    $("logoutBtn").onclick = async () => {
+      await api("/api/auth/logout", { method: "POST" });
+      resetAccountViews();
+      showNotice("已退出登录");
+    };
+
+    $("togglePasswordBtn").onclick = () => {
+      $("passwordPanel").classList.toggle("active");
+    };
+
+    $("changePasswordBtn").onclick = async () => {
+      try {
+        await api("/api/auth/change-password", {
+          method: "POST",
+          body: JSON.stringify({ old_password: $("oldPassword").value, new_password: $("newPassword").value }),
+        });
+        $("oldPassword").value = "";
+        $("newPassword").value = "";
+        $("passwordPanel").classList.remove("active");
+        resetPasswordVisibility();
+        showNotice("密码已修改，请使用新密码重新登录");
+      } catch (err) {
+        showError(err);
+      }
+    };
+
+    async function createOrLoadApiKey() {
+      try {
+        const data = await api("/api/auth/api-keys", {
+          method: "POST",
+          body: JSON.stringify({ name: $("keyName").value }),
+        });
+        renderApiKeyPanel([data.item]);
+        await loadMe();
+        showNotice(data.item?.created_at ? "API Key 已就绪，可直接复制" : "API Key 已生成");
+      } catch (err) {
+        showError(err);
+      }
+    }
+
+    $("createKeyBtn").onclick = createOrLoadApiKey;
+    $("createKeyLegacyBtn").onclick = createOrLoadApiKey;
+    $("reuseKeyBtn").onclick = loadMe;
+    $("copyKeyBtn").onclick = async () => {
+      const value = $("apiKeyValue").textContent.trim();
+      if (!value || value === "-") {
+        showNotice("当前没有可复制的 API Key", "err");
+        return;
+      }
+      try {
+        await navigator.clipboard.writeText(value);
+        showNotice("API Key 已复制");
+      } catch (err) {
+        showNotice("复制失败，请手动选择密钥文本", "err");
+      }
+    };
+
+    $("grantBtn").onclick = async () => {
+      try {
+        const quota = $("grantQuota").value ? Number($("grantQuota").value) : null;
+        await api("/api/admin/subscriptions", {
+          method: "POST",
+          body: JSON.stringify({ user_id: Number($("grantUser").value), plan_code: $("grantPlan").value, call_quota: quota }),
+        });
+        await loadAdmin();
+        showNotice("订阅已发放");
+      } catch (err) {
+        showError(err);
+      }
+    };
+
+    document.querySelectorAll(".tab").forEach((btn) => {
+      btn.onclick = () => activateView(btn.dataset.view);
+    });
+
+    initPasswordToggles();
+    initAgreementControls();
+    loadPlans().then(loadMe).catch(showError);
+  </script>
+</body>
+</html>

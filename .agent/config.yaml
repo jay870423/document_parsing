@@ -1,0 +1,48 @@
+version: 2
+name: document-parsing-harness
+language: en-US
+entrypoint: .agent/main-agent.md
+state_file: .agent/state/workflow-state.yaml
+change_root: .agent/changes
+memory_root: .agent/memory
+complexity_levels:
+  quick:
+    purpose: isolated low-risk change
+    workflow: [requirements, design, implementation, code_review]
+    human_approval_before: [production_deploy]
+  plan:
+    purpose: coordinated multi-file change
+    workflow: [requirements, design, design_review, implementation, code_review, ci_acceptance]
+    human_approval_before: [implementation, production_deploy]
+  complex:
+    purpose: high-risk, irreversible, security, data, or architecture change
+    workflow: [requirements, architecture, design_review, risk_review, implementation, code_review, ci_acceptance, release_approval, post_release_review]
+    human_approval_before: [implementation, production_deploy]
+roles:
+  requirements: .agent/agents/requirements/agent.md
+  architecture: .agent/agents/architecture/agent.md
+  development: .agent/agents/senior-development/agent.md
+  quality: .agent/agents/quality-acceptance/agent.md
+resources:
+  rules: [.agent/rules/00-core.md, .agent/rules/10-workflow-gates.md, .agent/rules/20-security.md, .agent/rules/30-repo-conventions.md]
+  wiki_index: .agent/wiki/index.md
+  templates: .agent/templates
+  ci_workflow: .github/workflows/ci.yml
+development:
+  task_plan_template: .agent/templates/implementation-plan.md
+  execution_modes: [parallel, serial]
+  parallel_requires:
+    - disjoint_write_scopes
+    - fixed_interfaces
+    - no_order_dependency
+    - independent_validation
+  serial_required_for:
+    - shared_files
+    - shared_schema_or_migration
+    - shared_api_contract
+    - security_or_permission_coupling
+    - dependency_chain
+policies:
+  default_to_higher_complexity_when_uncertain: true
+  require_human_confirmation_for: [production_deploy, destructive_migration, credential_rotation]
+  never_commit: [.env, data/, artifacts/, deploy/nginx/certs/]

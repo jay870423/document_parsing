@@ -277,17 +277,22 @@ class QdrantIndexer:
         self.distance = Distance[settings.distance_metric.upper()]
 
     @staticmethod
-    def _build_query_filter(source_filename: str | None = None) -> Filter | None:
-        if not source_filename:
-            return None
-        return Filter(
-            must=[
-                FieldCondition(
-                    key="source_filename",
-                    match=MatchValue(value=source_filename),
-                )
-            ]
-        )
+    def _build_query_filter(
+        source_filename: str | None = None,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
+        run_id: str | None = None,
+    ) -> Filter | None:
+        conditions = []
+        if user_id is not None:
+            conditions.append(FieldCondition(key="owner_user_id", match=MatchValue(value=int(user_id))))
+        if knowledge_base_id is not None:
+            conditions.append(FieldCondition(key="knowledge_base_id", match=MatchValue(value=int(knowledge_base_id))))
+        if run_id:
+            conditions.append(FieldCondition(key="run_id", match=MatchValue(value=run_id)))
+        if source_filename:
+            conditions.append(FieldCondition(key="source_filename", match=MatchValue(value=source_filename)))
+        return Filter(must=conditions) if conditions else None
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
@@ -334,6 +339,10 @@ class QdrantIndexer:
             "source_filename": hit_source_name,
             "source_manual": str(payload.get("source_manual", hit_source_name)),
             "source_type": str(payload.get("source_type", "")),
+            "owner_user_id": QdrantIndexer._to_optional_int(payload.get("owner_user_id")),
+            "knowledge_base_id": QdrantIndexer._to_optional_int(payload.get("knowledge_base_id")),
+            "api_key_id": QdrantIndexer._to_optional_int(payload.get("api_key_id")),
+            "run_id": str(payload.get("run_id", "")),
             "chunk_index": int(payload.get("chunk_index", -1)),
             "page_start": QdrantIndexer._to_optional_int(payload.get("page_start")),
             "page_end": QdrantIndexer._to_optional_int(payload.get("page_end")),
@@ -374,14 +383,19 @@ class QdrantIndexer:
             points.append(PointStruct(id=str(uuid.uuid4()), vector=vector, payload=payload))
         self.client.upsert(collection_name=self.collection, points=points)
 
-    def remove_source_chunks(self, source_filename: str) -> int:
+    def remove_source_chunks(
+        self,
+        source_filename: str,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
+    ) -> int:
         target = (source_filename or "").strip()
         if not target:
             return 0
         if not self.ensure_collection(create_if_missing=False):
             return 0
 
-        query_filter = self._build_query_filter(target)
+        query_filter = self._build_query_filter(target, user_id=user_id, knowledge_base_id=knowledge_base_id)
         if query_filter is None:
             return 0
 
@@ -401,11 +415,57 @@ class QdrantIndexer:
         )
         return matched
 
-    def list_sources(self, max_points: int = 2000) -> list[dict]:
+    def remove_run_chunks(
+        self,
+        run_id: str,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
+    ) -> int:
+        target = (run_id or "").strip()
+        if not target:
+            return 0
+        if not self.ensure_collection(create_if_missing=False):
+            return 0
+
+        query_filter = self._build_query_filter(
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            run_id=target,
+        )
+        if query_filter is None:
+            return 0
+
+        count_result = self.client.count(
+            collection_name=self.collection,
+            count_filter=query_filter,
+            exact=True,
+        )
+        matched = int(getattr(count_result, "count", 0))
+        if matched <= 0:
+            return 0
+
+        self.client.delete(
+            collection_name=self.collection,
+            points_selector=query_filter,
+            wait=True,
+        )
+        return matched
+
+    def list_sources(
+        self,
+        max_points: int = 2000,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
+    ) -> list[dict]:
         if not self.ensure_collection(create_if_missing=False):
             return []
 
-        records = self._scan_keyword_candidates(source_filename=None, max_points=max(100, min(max_points, 10000)))
+        records = self._scan_keyword_candidates(
+            source_filename=None,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            max_points=max(100, min(max_points, 10000)),
+        )
         grouped: dict[str, dict] = {}
         for item in records:
             payload = item.payload or {}
@@ -422,6 +482,10 @@ class QdrantIndexer:
                     "source_filename": source_filename,
                     "source_manual": str(payload.get("source_manual", source_filename or source_file)),
                     "source_type": str(payload.get("source_type", "")),
+                    "owner_user_id": QdrantIndexer._to_optional_int(payload.get("owner_user_id")),
+                    "knowledge_base_id": QdrantIndexer._to_optional_int(payload.get("knowledge_base_id")),
+                    "api_key_id": QdrantIndexer._to_optional_int(payload.get("api_key_id")),
+                    "run_id": str(payload.get("run_id", "")),
                     "merged_output": merged_output,
                     "chunk_count": 0,
                 }
@@ -444,10 +508,12 @@ class QdrantIndexer:
         query_vector: list[float],
         top_k: int = 5,
         source_filename: str | None = None,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
     ) -> list[dict]:
         if not self.ensure_collection(create_if_missing=False):
             return []
-        query_filter = self._build_query_filter(source_filename)
+        query_filter = self._build_query_filter(source_filename, user_id=user_id, knowledge_base_id=knowledge_base_id)
         results = self.client.search(
             collection_name=self.collection,
             query_vector=query_vector,
@@ -462,9 +528,15 @@ class QdrantIndexer:
     def _scan_keyword_candidates(
         self,
         source_filename: str | None,
+        user_id: int | None,
+        knowledge_base_id: int | None,
         max_points: int,
     ) -> list:
-        query_filter = self._build_query_filter(source_filename)
+        query_filter = self._build_query_filter(
+            source_filename,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+        )
         records = []
         offset = None
 
@@ -488,6 +560,8 @@ class QdrantIndexer:
         query_text: str,
         top_k: int = 5,
         source_filename: str | None = None,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
         max_points: int = 500,
     ) -> list[dict]:
         if not self.ensure_collection(create_if_missing=False):
@@ -500,6 +574,8 @@ class QdrantIndexer:
 
         candidates = self._scan_keyword_candidates(
             source_filename=source_filename,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
             max_points=max(50, min(max_points, self.KEYWORD_SCAN_LIMIT)),
         )
         docs = []
@@ -572,17 +648,23 @@ class QdrantIndexer:
         query_vector: list[float],
         top_k: int = 5,
         source_filename: str | None = None,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
     ) -> list[dict]:
         candidate_size = max(top_k * 4, 20)
         semantic_hits = self._search_semantic_chunks(
             query_vector=query_vector,
             top_k=candidate_size,
             source_filename=source_filename,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
         )
         keyword_hits = self._search_keyword_chunks(
             query_text=query_text,
             top_k=candidate_size,
             source_filename=source_filename,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
             max_points=max(top_k * 120, 400),
         )
 
@@ -612,6 +694,8 @@ class QdrantIndexer:
         query_text: str,
         top_k: int = 5,
         source_filename: str | None = None,
+        user_id: int | None = None,
+        knowledge_base_id: int | None = None,
         retrieval_mode: str = "semantic",
     ) -> list[dict]:
         mode = (retrieval_mode or "semantic").lower()
@@ -620,6 +704,8 @@ class QdrantIndexer:
                 query_text=query_text,
                 top_k=top_k,
                 source_filename=source_filename,
+                user_id=user_id,
+                knowledge_base_id=knowledge_base_id,
                 max_points=max(top_k * 120, 400),
             )
         if mode == "hybrid":
@@ -630,6 +716,8 @@ class QdrantIndexer:
                 query_vector=query_vector,
                 top_k=top_k,
                 source_filename=source_filename,
+                user_id=user_id,
+                knowledge_base_id=knowledge_base_id,
             )
         if mode == "semantic":
             if query_vector is None:
@@ -638,5 +726,7 @@ class QdrantIndexer:
                 query_vector=query_vector,
                 top_k=top_k,
                 source_filename=source_filename,
+                user_id=user_id,
+                knowledge_base_id=knowledge_base_id,
             )
         raise ValueError(f"Unsupported retrieval mode: {retrieval_mode}")

@@ -107,6 +107,8 @@ Evidence: user message 提供目标主机与凭据并要求部署
 - 未执行生产发布；未使用生产数据或生产凭据。
 - 生产发布：2026-11-21 完成，备份 /home/ubuntu/document_parsing-backup-wewe-20261121-104217.tgz，
   仅重建 document-parser-app，/health 与 / 均 200，Qdrant 卷与 .env 未改动（deployment.md）。
+- 追加发布（2026-11-21 11:05）：控制台新增“采集源”页签并在生产启用集成
+  （WEWE_ENABLED=true）；线上完成来源新增 → 采集 → 入库 → 现有 RAG 检索命中的全链路验证。
 
 ## Rollback
 
@@ -117,7 +119,8 @@ Evidence: user message 提供目标主机与凭据并要求部署
 
 ## Residual risks
 
-- 集成默认关闭（WEWE_ENABLED 默认 false），开启前需完成真实上游连通性与图片 embedding 模型维度验证。
+- 集成已在生产启用（WEWE_ENABLED=true），但上游 WeWe RSS 服务尚未部署，公众号来源暂不可用；
+  原生图片向量仍关闭，需确认多模态模型与维度后再开启。
 - 上游授权合规与使用条款需与上游确认（R10）。
 - 网站来源走本地采集，属对原需求的偏差说明；本期无前端控制台页面（仅 API）。
 - 文章正文长期保留会增长数据库体积，尚无保留期清理任务。

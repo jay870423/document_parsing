@@ -87,3 +87,32 @@
 - 上游 WeWe RSS 与图片 embedding 模型就绪后，按 docs/wewe-rss-integration.md 配置
   WEWE_* 环境变量并做一次小规模采集演练，再开启 WEWE_ENABLED。
 
+---
+
+## 追加发布：控制台前端 + 启用集成（2026-11-21 11:05–11:12）
+
+背景：首次发布只交付了后端 API 与关闭状态的集成，线上控制台看不到新功能。
+
+- 补充内容：app/static/console.html 新增“采集源”页签（来源增删改查/订阅开关/立即采集、
+  文章列表与删除、采集任务列表、图片检索入口、集成状态徽标）；
+  app/wewe_api.py 修正来源未指定知识库时落到 knowledge_base_id=0 的问题（改为落到用户默认知识库）。
+- 前端校验：node --check 通过；Playwright 本地端到端（登录 → 打开页签 → 新增来源 →
+  触发采集 → 任务与文章回显）通过，无 JS 错误。
+- 服务器操作：备份 console.html / wewe_api.py / .env（*.bak-20261121-110716）；
+  仅重建 document-parser-app；nginx、qdrant 未重启；.env 追加 WEWE_ENABLED=true、
+  WEWE_COLLECT_ENABLED=false、WEWE_IMAGE_VECTOR_ENABLED=false、WEWE_ARTIFACT_DIR=artifacts/wewe
+  （.env 权限保持 600，未读取或输出任何密钥）。
+- 线上验证：
+  - /health 200；首页已包含采集源页签（weweView 命中 3 处）；
+  - /api/wewe/status 返回 enabled=true（upstream 未部署，故 upstream_configured=false）；
+  - 新增网站来源 https://doc.zhouyuaninfo.com.cn/ → 采集任务 status=success，
+    article_count=1、indexed_count=1；
+  - 文章落库 wewe_articles（knowledge_base_id=1），并在既有文本集合 manual_chunks_v2
+    写入 1 个点位：chunk_type=article_text、vector_space=text、article_id=1、
+    owner_user_id=1、knowledge_base_id=1；
+  - 现有 RAG 检索命中该文章（score 0.69），证明“采集 → 图文分离入库 → 现有 RAG 检索”
+    全链路在生产可用。
+- 遗留：控制台上保留一个自检来源（文档解析开放平台（自检）），可由用户在页签内删除。
+- 仍未覆盖：公众号（mp）来源需要在上游部署 WeWe RSS 服务并配置 WEWE_BASE_URL/WEWE_AUTH_CODE；
+  原生图片向量需要 WEWE_IMAGE_VECTOR_ENABLED=true 与可用的多模态模型。
+

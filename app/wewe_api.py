@@ -117,9 +117,9 @@ def build_wewe_router(
         elif not payload.upstream_feed_id.strip():
             raise HTTPException(status_code=400, detail="upstream_feed_id is required for mp source")
 
-        kb_id = int(payload.knowledge_base_id) if payload.knowledge_base_id else None
-        if kb_id is not None:
-            resolve_kb(user.id, kb_id)
+        # 未指定知识库时落到用户的默认知识库，避免向量写入 knowledge_base_id=0 导致检索不到
+        kb = resolve_kb(user.id, payload.knowledge_base_id)
+        kb_id = int(kb["id"])
 
         name = payload.name.strip()
         intro = payload.intro.strip()
@@ -137,7 +137,7 @@ def build_wewe_router(
 
         source_id = store.add_source(
             user_id=user.id,
-            knowledge_base_id=int(kb_id) if kb_id else 0,
+            knowledge_base_id=kb_id,
             source_type=source_type,
             name=name or payload.upstream_feed_id or payload.target_url,
             upstream_feed_id=payload.upstream_feed_id.strip(),
@@ -181,11 +181,12 @@ def build_wewe_router(
         source = store.get_source(user.id, source_id)
         if not source:
             raise HTTPException(status_code=404, detail="source not found")
+        kb = resolve_kb(user.id, int(source.get("knowledge_base_id") or 0) or None)
         try:
             result = pipeline.collect_source(
                 user_id=user.id,
                 source_id=source_id,
-                knowledge_base_id=int(source.get("knowledge_base_id") or 0) or None,
+                knowledge_base_id=int(kb["id"]),
                 limit=payload.limit,
                 refresh=payload.refresh,
                 kind="manual",

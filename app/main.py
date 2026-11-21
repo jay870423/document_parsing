@@ -18,6 +18,12 @@ from app.billing import ApiKeyContext, BillingStore, UserContext, estimate_token
 from app.config import Settings, get_env_file_path, get_settings
 from app.pipeline import DocumentPipeline
 from app.sms import TencentSmsClient, friendly_sms_error
+from app.wewe_api import build_wewe_router
+from app.wewe_client import WeWeRssClient
+from app.wewe_images import ImageEmbeddingClient, WeWeVectorIndex
+from app.wewe_pipeline import WeWeIngestPipeline
+from app.wewe_scheduler import WeWeScheduler
+from app.wewe_store import WeWeStore
 
 app = FastAPI(title=get_settings().app_name, docs_url=None, redoc_url=None)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -30,6 +36,26 @@ settings: Settings = get_settings()
 pipeline: DocumentPipeline = DocumentPipeline(settings)
 billing_store: BillingStore = BillingStore(settings.database_path)
 billing_store.bootstrap_admin(settings.bootstrap_admin_email, settings.bootstrap_admin_password)
+
+wewe_store: WeWeStore = WeWeStore(settings.database_path)
+wewe_client: WeWeRssClient = WeWeRssClient(
+    base_url=settings.wewe_base_url,
+    auth_code=settings.wewe_auth_code,
+    timeout=settings.wewe_timeout_seconds,
+    max_retries=settings.wewe_max_retries,
+)
+wewe_vector_index: WeWeVectorIndex = WeWeVectorIndex(settings)
+wewe_image_embedding: ImageEmbeddingClient = ImageEmbeddingClient(settings)
+wewe_pipeline: WeWeIngestPipeline = WeWeIngestPipeline(
+    settings=settings,
+    store=wewe_store,
+    client=wewe_client,
+    vector_index=wewe_vector_index,
+    embedding=pipeline.embedding,
+    vision=pipeline.vision,
+    image_embedding=wewe_image_embedding,
+)
+wewe_scheduler: WeWeScheduler = WeWeScheduler(settings, wewe_store, wewe_pipeline)
 
 AGREEMENT_TERMS_VERSION = "terms-v2026.06.29"
 AGREEMENT_PRIVACY_VERSION = "privacy-v2026.06.29"
@@ -86,6 +112,7 @@ class RagSearchRequest(BaseModel):
     source_filename: str | None = None
     knowledge_base_id: int | None = Field(default=None, gt=0)
     retrieval_mode: Literal["semantic", "keyword", "hybrid"] = "semantic"
+    include_images: bool = False
 
 
 class RagAnswerRequest(BaseModel):
@@ -94,6 +121,7 @@ class RagAnswerRequest(BaseModel):
     source_filename: str | None = None
     knowledge_base_id: int | None = Field(default=None, gt=0)
     retrieval_mode: Literal["semantic", "keyword", "hybrid"] = "semantic"
+    include_images: bool = False
 
 
 class RagFeedbackRequest(BaseModel):
@@ -474,6 +502,28 @@ def _attach_source_urls(hits: list[dict]) -> list[dict]:
     return enriched
 
 
+def _search_related_images(query: str, user_id: int, knowledge_base_id: int, top_k: int = 5) -> list[dict]:
+    """在原生图片向量空间检索与查询相关的图片（失败时静默降级为空列表）。"""
+
+    if not settings.wewe_enabled or not settings.wewe_image_vector_enabled:
+        return []
+    try:
+        vector = wewe_image_embedding.embed_text(query)
+        if not vector:
+            return []
+        hits = wewe_vector_index.search_images(
+            query_vector=vector,
+            user_id=user_id,
+            knowledge_base_id=knowledge_base_id,
+            top_k=top_k,
+        )
+    except Exception:
+        return []
+    for hit in hits:
+        hit["image_file_url"] = _to_artifact_url(str(hit.get("local_path") or ""))
+    return hits
+
+
 def _enrich_process_result(result: dict, work_dir: Path) -> dict:
     merged_output = Path(result["merged_output"])
     result["merged_output_url"] = _to_artifact_url(str(merged_output))
@@ -514,6 +564,29 @@ def _resolve_user_knowledge_base(user_id: int, knowledge_base_id: int | None) ->
         return billing_store.get_knowledge_base_for_user(user_id, knowledge_base_id)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+app.include_router(
+    build_wewe_router(
+        current_user=current_user,
+        store=wewe_store,
+        pipeline=wewe_pipeline,
+        vector_index=wewe_vector_index,
+        client=wewe_client,
+        settings=settings,
+        resolve_kb=_resolve_user_knowledge_base,
+    )
+)
+
+
+@app.on_event("startup")
+def _start_wewe_scheduler() -> None:
+    wewe_scheduler.start()
+
+
+@app.on_event("shutdown")
+def _stop_wewe_scheduler() -> None:
+    wewe_scheduler.stop()
 
 
 def _public_base_url(request: Request) -> str:
@@ -1205,6 +1278,11 @@ def api_knowledge_search(
             retrieval_mode=mode,
         )
         hits = _attach_source_urls(hits)
+        image_hits = (
+            _search_related_images(query, api_key.user_id, int(kb["id"]), top_k=payload.top_k)
+            if payload.include_images
+            else []
+        )
         billing_store.consume_call(
             user_id=api_key.user_id,
             api_key_id=api_key.id,
@@ -1237,6 +1315,7 @@ def api_knowledge_search(
         "knowledge_base": kb,
         "retrieval_mode": payload.retrieval_mode,
         "hits": hits,
+        "image_hits": image_hits,
     }
 
 
@@ -1305,6 +1384,28 @@ def api_knowledge_answer(
 
         answer = pipeline.chat.answer_with_context(question=query, hits=hits)
         citations = _citations_from_hits(hits)
+        image_hits = (
+            _search_related_images(query, user.id, int(kb["id"]), top_k=payload.top_k)
+            if payload.include_images
+            else []
+        )
+        for offset, image_hit in enumerate(image_hits, start=len(citations) + 1):
+            citations.append(
+                {
+                    "index": offset,
+                    "score": image_hit.get("score", 0.0),
+                    "source_filename": image_hit.get("article_title") or image_hit.get("source_name") or "",
+                    "source_file": image_hit.get("article_url") or "",
+                    "source_file_url": image_hit.get("image_file_url"),
+                    "knowledge_base_id": image_hit.get("knowledge_base_id"),
+                    "chunk_index": -1,
+                    "chapter": None,
+                    "snippet": image_hit.get("description") or "",
+                    "vector_space": "image",
+                    "image_id": image_hit.get("image_id"),
+                    "article_id": image_hit.get("article_id"),
+                }
+            )
         log_item = billing_store.record_rag_query_log(
             user_id=api_key.user_id,
             api_key_id=api_key.id,
@@ -1353,6 +1454,7 @@ def api_knowledge_answer(
         "query_log_id": log_item["id"],
         "citations": citations,
         "hits": hits,
+        "image_hits": image_hits,
     }
 
 
@@ -2038,6 +2140,11 @@ def rag_search(payload: RagSearchRequest, user: UserContext = Depends(current_us
             retrieval_mode=mode,
         )
         hits = _attach_source_urls(hits)
+        image_hits = (
+            _search_related_images(query, user.id, int(kb["id"]), top_k=payload.top_k)
+            if payload.include_images
+            else []
+        )
         billing_store.consume_call(
             user_id=user.id,
             api_key_id=None,
@@ -2071,6 +2178,7 @@ def rag_search(payload: RagSearchRequest, user: UserContext = Depends(current_us
         "knowledge_base": kb,
         "retrieval_mode": payload.retrieval_mode,
         "hits": hits,
+        "image_hits": image_hits,
     }
 
 

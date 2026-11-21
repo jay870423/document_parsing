@@ -56,6 +56,26 @@ class Settings(BaseSettings):
     chunk_overlap: int = 100
     rag_answer_max_tokens: int = 1200
 
+    # --- wewe-rss integration (upstream collector adapter) ---
+    wewe_enabled: bool = False
+    wewe_base_url: str = ""
+    wewe_auth_code: str = ""
+    wewe_timeout_seconds: int = 20
+    wewe_max_retries: int = 3
+    wewe_page_limit: int = 30
+    wewe_max_articles_per_source: int = 50
+    wewe_max_images_per_article: int = 20
+    wewe_max_image_bytes: int = 5_000_000
+    wewe_max_download_bytes: int = 5_000_000
+    wewe_collect_enabled: bool = False
+    wewe_collect_interval_minutes: int = 60
+    wewe_image_collection: str = "wewe_image_chunks"
+    wewe_image_embedding_model: str = "doubao-embedding-vision"
+    wewe_image_vector_size: int = 1024
+    wewe_image_vector_enabled: bool = False
+    wewe_image_vector_weight: float = 0.3
+    wewe_artifact_dir: str = "artifacts/wewe"
+
 
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:

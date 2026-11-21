@@ -197,3 +197,16 @@ DOUBAO_CHAT_MODEL=doubao-pro-32k            # 或 endpoint_id_xxx
 ```bash
 docker compose up -d --build
 ```
+
+## 微信公众号 / 网站采集集成（wewe-rss）
+
+本服务可把 WeWe RSS 作为受控上游采集器，统一管理公众号与网站来源，并把采集文章的
+正文与图片分离后接入现有 RAG（正文与图片视觉描述进文本向量空间，原图经多模态模型生成
+原生图片向量，存放在独立向量集合）。
+
+- 默认关闭，通过 `.env` 中的 `WEWE_ENABLED=true` 启用；
+- 接口：`/api/wewe/sources`、`/api/wewe/articles`、`/api/wewe/tasks`、
+  `/api/wewe/images/search` 等；
+- 既有 RAG 接口新增可选参数 `include_images`，返回 `image_hits` 用于回溯来源图片。
+
+详细说明见 `docs/wewe-rss-integration.md`。

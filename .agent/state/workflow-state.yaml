@@ -1,14 +1,42 @@
 workflow:
   name: document_parsing-harness
-  status: closed
-  current_stage: none
-  complexity: null
-  active_change: null
-  updated_at: 2026-11-16T00:58:00+08:00
-stages: {}
+  status: released
+  current_stage: post_release_review
+  complexity: complex
+  active_change: CHG-20261119-006-wewe-rss-integration
+  updated_at: 2026-11-21T00:00:00+08:00
+stages:
+  P1:
+    status: completed_with_repair
+    artifact: .agent/changes/CHG-20261116-005-orchestrator-workflow/requirements.md
+    verification: controller read-back passed after removing malformed patch wrapper
+  P2:
+    status: blocked
+    artifact: .agent/changes/CHG-20261116-005-orchestrator-workflow/requirements-review.md
+    blocker: independent reviewer produced no review artifact or structured result
+  P3:
+    status: completed_with_conditions
+    artifact: .agent/changes/CHG-20261119-006-wewe-rss-integration/ci.md
+    note: CHG-20261119-006 implementation, code review and CI acceptance completed; production release still requires human approval
+  P4:
+    status: completed
+    artifact: .agent/changes/CHG-20261119-006-wewe-rss-integration/post-release-review.md
+    note: released to 114.132.239.186 on 2026-11-21, health checks passed, rollback backup retained
 changes:
   - CHG-20261115-001-harness-workflow
   - CHG-20261115-002-remove-agent-capabilities
   - CHG-20261116-003-deploy-and-commit
-approvals: []
-risks: []
+  - CHG-20261116-004-deployment-skill
+  - CHG-20261116-005-orchestrator-workflow
+  - CHG-20261119-006-wewe-rss-integration
+approvals:
+  - change: CHG-20261116-005-orchestrator-workflow
+    gate: mode_confirmation
+    decision: approved
+    by: user
+    at: 2026-11-16
+risks:
+  - previously disclosed production password requires rotation
+  - session did not expose the requested Task tool; P2 independent review is pending
+  - wewe-rss integration disabled by default (WEWE_ENABLED=false) until upstream connectivity and image embedding dimensions are verified
+  - design and risk reviews for CHG-20261119-006 were performed by the controller (self-review), not by independent harness roles

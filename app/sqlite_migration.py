@@ -124,7 +124,7 @@ def _declared_target_columns(table: str) -> list[str]:
         raise MigrationError(f"target schema declaration is missing table: {table}")
     columns = []
     for raw_line in statement.splitlines():
-        match = re.match(r"^\s*([a-z_][a-z0-9_]*)\s+([A-Z][A-Z0-9]*)\b", raw_line)
+        match = re.match(r"^\s*`?([a-z_][a-z0-9_]*)`?\s+([A-Z][A-Z0-9]*)\b", raw_line)
         if match and match.group(1) not in {
             "primary", "unique", "index", "constraint", "foreign", "check", "key"
         }:

@@ -7,7 +7,7 @@ import pytest
 from app.mysql import raw_connection
 from app.billing import BillingStore
 from app.mysql_schema import BILLING_SCHEMA, WEWE_SCHEMA
-from app.sqlite_migration import TABLES, MigrationError, migrate_sqlite
+from app.sqlite_migration import TABLES, MigrationError, _declared_target_columns, migrate_sqlite
 from app.wewe_store import WeWeStore
 
 
@@ -262,3 +262,9 @@ def test_sqlite_fresh_migration_rejects_extra_plan_business_data(tmp_path, mysql
         )
     with pytest.raises(MigrationError, match="non-empty: plans"):
         migrate_sqlite(source, mysql_settings, apply=True)
+
+
+def test_declared_target_columns_include_backtick_quoted_query():
+    columns = _declared_target_columns("rag_query_logs")
+    assert "query" in columns
+    assert "answer" in columns

@@ -20,12 +20,15 @@ from app.pipeline import DocumentPipeline
 from app.sms import TencentSmsClient, friendly_sms_error
 from app.wewe_api import build_wewe_router
 from app.wewe_client import WeWeRssClient
-from app.wewe_images import ImageEmbeddingClient, WeWeVectorIndex
+from app.wewe_images import ImageEmbeddingClient, WeWeVectorIndex, public_image_hit
 from app.wewe_pipeline import WeWeIngestPipeline
+from app.wewe_runner import WeWeCollectionRunner
 from app.wewe_scheduler import WeWeScheduler
 from app.wewe_store import WeWeStore
 
-app = FastAPI(title=get_settings().app_name, docs_url=None, redoc_url=None)
+app = FastAPI(
+    title=get_settings().app_name, docs_url=None, redoc_url=None, openapi_url=None
+)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 ARTIFACTS_DIR = Path("artifacts")
 ARTIFACT_OWNER_FILE = "_owner.json"
@@ -34,10 +37,10 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 settings: Settings = get_settings()
 pipeline: DocumentPipeline = DocumentPipeline(settings)
-billing_store: BillingStore = BillingStore(settings.database_path)
+billing_store: BillingStore = BillingStore(settings)
 billing_store.bootstrap_admin(settings.bootstrap_admin_email, settings.bootstrap_admin_password)
 
-wewe_store: WeWeStore = WeWeStore(settings.database_path)
+wewe_store: WeWeStore = WeWeStore(settings)
 wewe_client: WeWeRssClient = WeWeRssClient(
     base_url=settings.wewe_base_url,
     auth_code=settings.wewe_auth_code,
@@ -56,6 +59,7 @@ wewe_pipeline: WeWeIngestPipeline = WeWeIngestPipeline(
     image_embedding=wewe_image_embedding,
 )
 wewe_scheduler: WeWeScheduler = WeWeScheduler(settings, wewe_store, wewe_pipeline)
+wewe_collection_runner: WeWeCollectionRunner = WeWeCollectionRunner(wewe_store, wewe_pipeline)
 
 AGREEMENT_TERMS_VERSION = "terms-v2026.06.29"
 AGREEMENT_PRIVACY_VERSION = "privacy-v2026.06.29"
@@ -465,6 +469,18 @@ def _artifact_actor(
     return api_key.user_id, api_key.id
 
 
+def current_wewe_image_user(
+    request: Request,
+    authorization: str | None = Header(default=None),
+    x_api_key: str | None = Header(default=None, alias="X-API-Key"),
+) -> UserContext:
+    """Allow the same Session/API Key identities as other protected artifacts."""
+    actor = _artifact_actor(request, authorization, x_api_key)
+    if actor is None:
+        raise HTTPException(status_code=401, detail="请先登录或提供有效 API Key")
+    return UserContext(id=actor[0], email="", is_admin=False, is_active=True)
+
+
 @app.get("/artifacts/{artifact_path:path}")
 def artifact_file(
     artifact_path: str,
@@ -515,13 +531,35 @@ def _search_related_images(query: str, user_id: int, knowledge_base_id: int, top
             query_vector=vector,
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
+            article_versions=wewe_store.published_vector_versions(user_id, knowledge_base_id),
             top_k=top_k,
         )
     except Exception:
         return []
-    for hit in hits:
-        hit["image_file_url"] = _to_artifact_url(str(hit.get("local_path") or ""))
-    return hits
+    return [public_image_hit(hit) for hit in hits]
+
+
+def _image_citations_from_hits(image_hits: list[dict], start_index: int = 1) -> list[dict]:
+    citations = []
+    for offset, image_hit in enumerate(image_hits, start=start_index):
+        file_url = image_hit.get("image_file_url")
+        citations.append({
+            "index": offset,
+            "type": "image",
+            "score": image_hit.get("score", 0.0),
+            "source_filename": image_hit.get("article_title") or image_hit.get("source_name") or "",
+            "source_file": image_hit.get("article_url") or "",
+            "source_file_url": file_url,
+            "image_file_url": file_url,
+            "knowledge_base_id": image_hit.get("knowledge_base_id"),
+            "chunk_index": -1,
+            "chapter": None,
+            "snippet": image_hit.get("description") or "",
+            "vector_space": "image",
+            "image_id": image_hit.get("image_id"),
+            "article_id": image_hit.get("article_id"),
+        })
+    return citations
 
 
 def _enrich_process_result(result: dict, work_dir: Path) -> dict:
@@ -575,18 +613,23 @@ app.include_router(
         client=wewe_client,
         settings=settings,
         resolve_kb=_resolve_user_knowledge_base,
+        collection_runner=wewe_collection_runner,
+        current_image_user=current_wewe_image_user,
     )
 )
 
 
 @app.on_event("startup")
 def _start_wewe_scheduler() -> None:
+    billing_store.reconcile_abandoned_reservations()
+    wewe_store.recover_interrupted_tasks()
     wewe_scheduler.start()
 
 
 @app.on_event("shutdown")
 def _stop_wewe_scheduler() -> None:
     wewe_scheduler.stop()
+    wewe_collection_runner.close()
 
 
 def _public_base_url(request: Request) -> str:
@@ -672,6 +715,11 @@ async def _run_uploaded_parse(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
+@app.get("/openapi.json", include_in_schema=False)
+def authenticated_openapi(_: UserContext = Depends(current_user)) -> dict:
+    return app.openapi()
+
+
 @app.get("/")
 def console() -> FileResponse:
     return FileResponse(STATIC_DIR / "console.html")
@@ -683,7 +731,7 @@ def index() -> FileResponse:
 
 
 @app.get("/docs", include_in_schema=False)
-def custom_docs() -> HTMLResponse:
+def custom_docs(_: UserContext = Depends(current_user)) -> HTMLResponse:
     return HTMLResponse(
         """
 <!doctype html>
@@ -1045,6 +1093,16 @@ def admin_stats(days: int = 30, _: UserContext = Depends(current_admin)) -> dict
     return billing_store.usage_summary(days=days)
 
 
+def _reserve_call_quota(user_id: int, is_admin: bool = False):
+    """Reserve before paid work; HTTP 402 means no model/fetch was started."""
+    if is_admin:
+        return None
+    try:
+        return billing_store.reserve_call(user_id)
+    except PermissionError as exc:
+        raise HTTPException(status_code=402, detail=str(exc)) from exc
+
+
 @app.post("/process")
 async def process_document(
     file: UploadFile = File(...),
@@ -1054,15 +1112,10 @@ async def process_document(
     knowledge_base_id: int | None = Form(None),
     user: UserContext = Depends(current_user),
 ) -> dict:
-    if not user.is_admin:
-        try:
-            billing_store.ensure_quota(user.id)
-        except PermissionError as exc:
-            raise HTTPException(status_code=402, detail=str(exc)) from exc
-
     start = time.perf_counter()
     run_id = ""
     kb = _resolve_user_knowledge_base(user.id, knowledge_base_id)
+    reservation = _reserve_call_quota(user.id, user.is_admin)
     try:
         run_id, result = await _run_uploaded_parse(
             file,
@@ -1087,18 +1140,20 @@ async def process_document(
             latency_ms=int((time.perf_counter() - start) * 1000),
             output_tokens=estimate_tokens(output_text),
             meta={"run_id": run_id, "source_filename": result.get("source_filename"), "knowledge_base_id": kb["id"]},
+            reservation=reservation,
             call_count=0 if user.is_admin else 1,
         )
         return result
-    except HTTPException as exc:
+    except Exception as exc:
         billing_store.consume_call(
             user_id=user.id,
             api_key_id=None,
             endpoint="/process",
             method="POST",
-            status_code=exc.status_code,
+            status_code=getattr(exc, "status_code", 500),
             latency_ms=int((time.perf_counter() - start) * 1000),
-            meta={"run_id": run_id, "knowledge_base_id": kb["id"], "error": str(exc.detail)},
+            meta={"run_id": run_id, "knowledge_base_id": kb["id"], "error": str(getattr(exc, "detail", str(exc)))},
+            reservation=reservation,
             call_count=0 if user.is_admin else 1,
         )
         raise
@@ -1118,6 +1173,7 @@ async def api_parse_document(
     run_id = ""
     status_code = 200
     kb = _resolve_user_knowledge_base(api_key.user_id, knowledge_base_id)
+    reservation = _reserve_call_quota(api_key.user_id, api_key.is_admin)
     try:
         run_id, result = await _run_uploaded_parse(
             file,
@@ -1167,11 +1223,12 @@ async def api_parse_document(
                 "run_vision": run_vision,
                 "ingest_vector": ingest_vector,
             },
+            reservation=reservation,
             call_count=0 if api_key.is_admin else 1,
         )
         return response
-    except HTTPException as exc:
-        status_code = exc.status_code
+    except Exception as exc:
+        status_code = getattr(exc, "status_code", 500)
         billing_store.consume_call(
             user_id=api_key.user_id,
             api_key_id=api_key.id,
@@ -1179,7 +1236,8 @@ async def api_parse_document(
             method="POST",
             status_code=status_code,
             latency_ms=int((time.perf_counter() - start) * 1000),
-            meta={"run_id": run_id, "knowledge_base_id": kb["id"], "error": str(exc.detail)},
+            meta={"run_id": run_id, "knowledge_base_id": kb["id"], "error": str(getattr(exc, "detail", str(exc)))},
+            reservation=reservation,
             call_count=0,
         )
         raise
@@ -1207,7 +1265,11 @@ def api_create_knowledge_base(
 def api_knowledge_sources(knowledge_base_id: int, api_key: ApiKeyContext = Depends(current_api_key)) -> dict:
     kb = _resolve_user_knowledge_base(api_key.user_id, knowledge_base_id)
     try:
-        items = pipeline.indexer.list_sources(user_id=api_key.user_id, knowledge_base_id=int(kb["id"]))
+        items = pipeline.indexer.list_sources(
+            user_id=api_key.user_id,
+            knowledge_base_id=int(kb["id"]),
+            article_versions=wewe_store.published_vector_versions(api_key.user_id, int(kb["id"])),
+        )
         enriched = []
         for item in items:
             source_item = dict(item)
@@ -1265,6 +1327,7 @@ def api_knowledge_search(
         raise HTTPException(status_code=400, detail="query is empty")
     kb = _resolve_user_knowledge_base(api_key.user_id, knowledge_base_id)
     start = time.perf_counter()
+    reservation = _reserve_call_quota(api_key.user_id, api_key.is_admin)
     try:
         mode = payload.retrieval_mode
         query_vector = pipeline.embedding.embed_query(query) if mode in ("semantic", "hybrid") else None
@@ -1275,6 +1338,7 @@ def api_knowledge_search(
             source_filename=payload.source_filename.strip() if payload.source_filename else None,
             user_id=api_key.user_id,
             knowledge_base_id=int(kb["id"]),
+            article_versions=wewe_store.published_vector_versions(api_key.user_id, int(kb["id"])),
             retrieval_mode=mode,
         )
         hits = _attach_source_urls(hits)
@@ -1293,6 +1357,7 @@ def api_knowledge_search(
             input_tokens=estimate_tokens(query),
             output_tokens=sum(estimate_tokens(str(hit.get("text", ""))) for hit in hits),
             meta={"retrieval_mode": mode, "top_k": payload.top_k, "knowledge_base_id": kb["id"]},
+            reservation=reservation,
             call_count=0 if api_key.is_admin else 1,
         )
     except Exception as exc:
@@ -1305,6 +1370,7 @@ def api_knowledge_search(
             latency_ms=int((time.perf_counter() - start) * 1000),
             input_tokens=estimate_tokens(query),
             meta={"knowledge_base_id": kb["id"], "error": str(exc)},
+            reservation=reservation,
             call_count=0,
         )
         raise HTTPException(status_code=500, detail=f"RAG search failed: {exc}") from exc
@@ -1330,6 +1396,7 @@ def api_knowledge_answer(
         raise HTTPException(status_code=400, detail="query is empty")
     kb = _resolve_user_knowledge_base(api_key.user_id, knowledge_base_id)
     start = time.perf_counter()
+    reservation = _reserve_call_quota(api_key.user_id, api_key.is_admin)
     try:
         mode = payload.retrieval_mode
         query_vector = pipeline.embedding.embed_query(query) if mode in ("semantic", "hybrid") else None
@@ -1340,12 +1407,21 @@ def api_knowledge_answer(
             source_filename=payload.source_filename.strip() if payload.source_filename else None,
             user_id=api_key.user_id,
             knowledge_base_id=int(kb["id"]),
+            article_versions=wewe_store.published_vector_versions(api_key.user_id, int(kb["id"])),
             retrieval_mode=mode,
         )
         hits = _attach_source_urls(hits)
+        image_hits = (
+            _search_related_images(query, api_key.user_id, int(kb["id"]), top_k=payload.top_k)
+            if payload.include_images
+            else []
+        )
         if not hits:
-            answer = "知识库中未找到可用于回答该问题的依据。"
-            citations: list[dict] = []
+            answer = (
+                "未找到文字依据；已返回相关图片，请结合图片引用查看。"
+                if image_hits else "知识库中未找到可用于回答该问题的依据。"
+            )
+            citations: list[dict] = _image_citations_from_hits(image_hits)
             log_item = billing_store.record_rag_query_log(
                 user_id=api_key.user_id,
                 api_key_id=api_key.id,
@@ -1368,6 +1444,7 @@ def api_knowledge_answer(
                 input_tokens=estimate_tokens(query),
                 output_tokens=estimate_tokens(answer),
                 meta={"retrieval_mode": mode, "top_k": payload.top_k, "hit_count": 0, "knowledge_base_id": kb["id"]},
+                reservation=reservation,
                 call_count=0 if api_key.is_admin else 1,
             )
             return {
@@ -1380,15 +1457,11 @@ def api_knowledge_answer(
                 "query_log_id": log_item["id"],
                 "citations": citations,
                 "hits": [],
+                "image_hits": image_hits,
             }
 
         answer = pipeline.chat.answer_with_context(question=query, hits=hits)
         citations = _citations_from_hits(hits)
-        image_hits = (
-            _search_related_images(query, user.id, int(kb["id"]), top_k=payload.top_k)
-            if payload.include_images
-            else []
-        )
         for offset, image_hit in enumerate(image_hits, start=len(citations) + 1):
             citations.append(
                 {
@@ -1428,6 +1501,7 @@ def api_knowledge_answer(
             input_tokens=estimate_tokens(query) + sum(estimate_tokens(str(hit.get("text", ""))) for hit in hits),
             output_tokens=estimate_tokens(answer),
             meta={"retrieval_mode": mode, "top_k": payload.top_k, "hit_count": len(hits), "knowledge_base_id": kb["id"]},
+            reservation=reservation,
             call_count=0 if api_key.is_admin else 1,
         )
     except Exception as exc:
@@ -1440,6 +1514,7 @@ def api_knowledge_answer(
             latency_ms=int((time.perf_counter() - start) * 1000),
             input_tokens=estimate_tokens(query),
             meta={"knowledge_base_id": kb["id"], "error": str(exc)},
+            reservation=reservation,
             call_count=0,
         )
         raise HTTPException(status_code=500, detail=f"RAG answer failed: {exc}") from exc
@@ -1473,7 +1548,7 @@ def api_rag_feedback(payload: RagFeedbackRequest, api_key: ApiKeyContext = Depen
 
 
 @app.get("/api/debug", response_class=HTMLResponse)
-def api_debug_page() -> str:
+def api_debug_page(_: UserContext = Depends(current_user)) -> str:
     return """
 <!doctype html>
 <html lang="zh-CN">
@@ -2119,14 +2194,9 @@ def rag_search(payload: RagSearchRequest, user: UserContext = Depends(current_us
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="query is empty")
-    if not user.is_admin:
-        try:
-            billing_store.ensure_quota(user.id)
-        except PermissionError as exc:
-            raise HTTPException(status_code=402, detail=str(exc)) from exc
-
     start = time.perf_counter()
     kb = _resolve_user_knowledge_base(user.id, payload.knowledge_base_id)
+    reservation = _reserve_call_quota(user.id, user.is_admin)
     try:
         mode = payload.retrieval_mode
         query_vector = pipeline.embedding.embed_query(query) if mode in ("semantic", "hybrid") else None
@@ -2137,6 +2207,7 @@ def rag_search(payload: RagSearchRequest, user: UserContext = Depends(current_us
             source_filename=payload.source_filename.strip() if payload.source_filename else None,
             user_id=user.id,
             knowledge_base_id=int(kb["id"]),
+            article_versions=wewe_store.published_vector_versions(user.id, int(kb["id"])),
             retrieval_mode=mode,
         )
         hits = _attach_source_urls(hits)
@@ -2155,6 +2226,7 @@ def rag_search(payload: RagSearchRequest, user: UserContext = Depends(current_us
             input_tokens=estimate_tokens(query),
             output_tokens=sum(estimate_tokens(str(hit.get("text", ""))) for hit in hits),
             meta={"retrieval_mode": mode, "top_k": payload.top_k, "knowledge_base_id": kb["id"]},
+            reservation=reservation,
             call_count=0 if user.is_admin else 1,
         )
     except Exception as exc:
@@ -2167,6 +2239,7 @@ def rag_search(payload: RagSearchRequest, user: UserContext = Depends(current_us
             latency_ms=int((time.perf_counter() - start) * 1000),
             input_tokens=estimate_tokens(query),
             meta={"error": str(exc)},
+            reservation=reservation,
             call_count=0,
         )
         raise HTTPException(status_code=500, detail=f"RAG search failed: {exc}") from exc
@@ -2186,7 +2259,11 @@ def rag_search(payload: RagSearchRequest, user: UserContext = Depends(current_us
 def rag_sources(knowledge_base_id: int | None = None, user: UserContext = Depends(current_user)) -> dict:
     kb = _resolve_user_knowledge_base(user.id, knowledge_base_id)
     try:
-        items = pipeline.indexer.list_sources(user_id=user.id, knowledge_base_id=int(kb["id"]))
+        items = pipeline.indexer.list_sources(
+            user_id=user.id,
+            knowledge_base_id=int(kb["id"]),
+            article_versions=wewe_store.published_vector_versions(user.id, int(kb["id"])),
+        )
         enriched = []
         for item in items:
             source_item = dict(item)
@@ -2218,14 +2295,9 @@ def rag_answer(payload: RagAnswerRequest, user: UserContext = Depends(current_us
     query = payload.query.strip()
     if not query:
         raise HTTPException(status_code=400, detail="query is empty")
-    if not user.is_admin:
-        try:
-            billing_store.ensure_quota(user.id)
-        except PermissionError as exc:
-            raise HTTPException(status_code=402, detail=str(exc)) from exc
-
     start = time.perf_counter()
     kb = _resolve_user_knowledge_base(user.id, payload.knowledge_base_id)
+    reservation = _reserve_call_quota(user.id, user.is_admin)
     try:
         mode = payload.retrieval_mode
         query_vector = pipeline.embedding.embed_query(query) if mode in ("semantic", "hybrid") else None
@@ -2236,12 +2308,21 @@ def rag_answer(payload: RagAnswerRequest, user: UserContext = Depends(current_us
             source_filename=payload.source_filename.strip() if payload.source_filename else None,
             user_id=user.id,
             knowledge_base_id=int(kb["id"]),
+            article_versions=wewe_store.published_vector_versions(user.id, int(kb["id"])),
             retrieval_mode=mode,
         )
         hits = _attach_source_urls(hits)
+        image_hits = (
+            _search_related_images(query, user.id, int(kb["id"]), top_k=payload.top_k)
+            if payload.include_images
+            else []
+        )
         if not hits:
-            answer = "知识库中未找到可用于回答该问题的依据。"
-            citations: list[dict] = []
+            answer = (
+                "未找到文字依据；已返回相关图片，请结合图片引用查看。"
+                if image_hits else "知识库中未找到可用于回答该问题的依据。"
+            )
+            citations: list[dict] = _image_citations_from_hits(image_hits)
             log_item = billing_store.record_rag_query_log(
                 user_id=user.id,
                 api_key_id=None,
@@ -2264,6 +2345,7 @@ def rag_answer(payload: RagAnswerRequest, user: UserContext = Depends(current_us
                 input_tokens=estimate_tokens(query),
                 output_tokens=estimate_tokens(answer),
                 meta={"retrieval_mode": mode, "top_k": payload.top_k, "hit_count": 0, "knowledge_base_id": kb["id"]},
+                reservation=reservation,
                 call_count=0 if user.is_admin else 1,
             )
             return {
@@ -2276,10 +2358,28 @@ def rag_answer(payload: RagAnswerRequest, user: UserContext = Depends(current_us
                 "query_log_id": log_item["id"],
                 "citations": citations,
                 "hits": [],
+                "image_hits": image_hits,
             }
 
         answer = pipeline.chat.answer_with_context(question=query, hits=hits)
         citations = _citations_from_hits(hits)
+        for offset, image_hit in enumerate(image_hits, start=len(citations) + 1):
+            citations.append(
+                {
+                    "index": offset,
+                    "score": image_hit.get("score", 0.0),
+                    "source_filename": image_hit.get("article_title") or image_hit.get("source_name") or "",
+                    "source_file": image_hit.get("article_url") or "",
+                    "source_file_url": image_hit.get("image_file_url"),
+                    "knowledge_base_id": image_hit.get("knowledge_base_id"),
+                    "chunk_index": -1,
+                    "chapter": None,
+                    "snippet": image_hit.get("description") or "",
+                    "vector_space": "image",
+                    "image_id": image_hit.get("image_id"),
+                    "article_id": image_hit.get("article_id"),
+                }
+            )
         log_item = billing_store.record_rag_query_log(
             user_id=user.id,
             api_key_id=None,
@@ -2302,6 +2402,7 @@ def rag_answer(payload: RagAnswerRequest, user: UserContext = Depends(current_us
             input_tokens=estimate_tokens(query) + sum(estimate_tokens(str(hit.get("text", ""))) for hit in hits),
             output_tokens=estimate_tokens(answer),
             meta={"retrieval_mode": mode, "top_k": payload.top_k, "hit_count": len(hits), "knowledge_base_id": kb["id"]},
+            reservation=reservation,
             call_count=0 if user.is_admin else 1,
         )
     except Exception as exc:
@@ -2314,6 +2415,7 @@ def rag_answer(payload: RagAnswerRequest, user: UserContext = Depends(current_us
             latency_ms=int((time.perf_counter() - start) * 1000),
             input_tokens=estimate_tokens(query),
             meta={"error": str(exc)},
+            reservation=reservation,
             call_count=0,
         )
         raise HTTPException(status_code=500, detail=f"RAG answer failed: {exc}") from exc
@@ -2328,4 +2430,5 @@ def rag_answer(payload: RagAnswerRequest, user: UserContext = Depends(current_us
         "query_log_id": log_item["id"],
         "citations": citations,
         "hits": hits,
+        "image_hits": image_hits,
     }

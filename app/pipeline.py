@@ -8,15 +8,22 @@ from app.merge import merge_text_and_images, sort_text_blocks_by_position
 from app.parsers import DocumentParser
 from app.rag import DoubaoChatClient, DoubaoEmbeddingClient, QdrantIndexer, split_text_with_metadata
 from app.vision import DoubaoVisionClient
+from app.minimax_client import MiniMaxChatClient, MiniMaxVisionClient
 
 
 class DocumentPipeline:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.parser = DocumentParser()
-        self.vision = DoubaoVisionClient(settings)
+        if settings.ai_provider.strip().lower() == "minimax":
+            self.vision = MiniMaxVisionClient(settings)
+            self.chat = MiniMaxChatClient(settings)
+        elif settings.ai_provider.strip().lower() == "doubao":
+            self.vision = DoubaoVisionClient(settings)
+            self.chat = DoubaoChatClient(settings)
+        else:
+            raise ValueError(f"Unsupported AI_PROVIDER: {settings.ai_provider}")
         self.embedding = DoubaoEmbeddingClient(settings)
-        self.chat = DoubaoChatClient(settings)
         self.indexer = QdrantIndexer(settings)
 
     def process(

@@ -17,7 +17,18 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     log_level: str = "INFO"
-    database_path: str = "data/app.db"
+    # All relational data lives in the doc-only MySQL database.  The legacy
+    # SQLite file is read exclusively by the offline migration script.
+    mysql_host: str = "localhost"
+    mysql_port: int = 3306
+    mysql_user: str = "document_parsing_app"
+    mysql_password: str = ""
+    mysql_database: str = "document_parsing"
+    mysql_unix_socket: str = "/var/run/mysqld/mysqld.sock"
+    mysql_connect_timeout: int = 10
+    mysql_read_timeout: int = 30
+    mysql_write_timeout: int = 30
+    sqlite_source_path: str = "data/app.db"
     bootstrap_admin_email: str = "admin@doc.zhouyuaninfo.com.cn"
     bootstrap_admin_password: str = "Admin@123456"
     app_sms_enabled: bool = False
@@ -34,6 +45,12 @@ class Settings(BaseSettings):
 
     ark_api_key: str = Field(default="")
     ark_base_url: str = "https://ark.cn-beijing.volces.com/api/v3"
+    # MiniMax-M3 serves text answers and native-image descriptions through the
+    # Anthropic Messages protocol. Dense embedding remains on the existing Ark client.
+    ai_provider: str = "minimax"
+    anthropic_api_key: str = Field(default="")
+    anthropic_base_url: str = "https://api.minimaxi.com/anthropic"
+    minimax_model: str = "MiniMax-M3"
     doubao_vision_model: str = "doubao-vision-pro-32k"
     vision_max_retries: int = 3
     vision_timeout_seconds: int = 60
@@ -69,6 +86,7 @@ class Settings(BaseSettings):
     wewe_max_download_bytes: int = 5_000_000
     wewe_collect_enabled: bool = False
     wewe_collect_interval_minutes: int = 60
+    wewe_task_lease_seconds: int = 120
     wewe_image_collection: str = "wewe_image_chunks"
     wewe_image_embedding_model: str = "doubao-embedding-vision"
     wewe_image_vector_size: int = 1024

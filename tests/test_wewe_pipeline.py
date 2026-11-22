@@ -95,12 +95,31 @@ class FakeImageEmbedding:
 class FakeVectorIndex:
     def __init__(self):
         self.deleted: list[tuple[int, int]] = []
+        self.version_deletes: list[tuple] = []
         self.text_points: list[dict] = []
         self.image_points: list[dict] = []
 
     def delete_article(self, user_id, article_id):
         self.deleted.append((user_id, article_id))
         return {"text": 1, "image": 1}
+
+    def delete_article_version(self, user_id, article_id, vector_version):
+        self.version_deletes.append(("exact", user_id, article_id, vector_version))
+        self.text_points = [p for p in self.text_points if not (
+            p["article_id"] == article_id and p["metadata"].get("vector_version") == vector_version
+        )]
+        self.image_points = [p for p in self.image_points if not (
+            p.get("article_id", article_id) == article_id and p.get("vector_version") == vector_version
+        )]
+
+    def delete_stale_article_versions(self, user_id, article_id, current_version):
+        self.version_deletes.append(("stale", user_id, article_id, current_version))
+        self.text_points = [p for p in self.text_points if not (
+            p["article_id"] == article_id and p["metadata"].get("vector_version") != current_version
+        )]
+        self.image_points = [p for p in self.image_points if not (
+            p.get("article_id", article_id) == article_id and p.get("vector_version") != current_version
+        )]
 
     def upsert_text_chunks(self, user_id, knowledge_base_id, article_id, chunks, vectors, metadata, key_prefix="c"):
         for index, chunk in enumerate(chunks):
@@ -118,13 +137,13 @@ class FakeVectorIndex:
         return len(chunks)
 
     def upsert_image_vectors(self, user_id, knowledge_base_id, article_id, items):
-        self.image_points.extend(items)
+        self.image_points.extend(dict(item, article_id=article_id) for item in items)
         return len(items)
 
 
 @pytest.fixture()
-def store(tmp_path):
-    return WeWeStore(str(tmp_path / "app.db"))
+def store(wewe_settings):
+    return WeWeStore(wewe_settings)
 
 
 @pytest.fixture(autouse=True)
@@ -173,6 +192,7 @@ def _pipeline(tmp_path, store, items, image_vector=True):
 
 
 def _add_source(store, user_id=1, kb_id=1):
+    store.bind_upstream_feed(user_id, "MP_1")
     return store.add_source(
         user_id=user_id,
         knowledge_base_id=kb_id,
@@ -271,12 +291,16 @@ def test_collect_is_idempotent_and_reindexes(tmp_path, store):
 
     pipeline.collect_source(user_id=1, source_id=source_id)
     first_count = len(store.list_articles(1))
+    first_version = store.list_articles(1)[0]["vector_version"]
     pipeline.collect_source(user_id=1, source_id=source_id)
 
-    assert len(store.list_articles(1)) == first_count == 1
-    # 每次采集前都按 article_id 清理旧向量
-    assert len(index.deleted) == 2
-    assert index.deleted[0][0] == 1
+    articles = store.list_articles(1)
+    assert len(articles) == first_count == 1
+    # Reindexing publishes one new generation and cleans stale points only after commit.
+    assert index.deleted == []
+    assert len(index.text_points) == 1
+    assert index.text_points[0]["metadata"]["vector_version"] == articles[0]["vector_version"]
+    assert articles[0]["vector_version"] != first_version
 
 
 def test_collect_records_failure_without_breaking_batch(tmp_path, store):

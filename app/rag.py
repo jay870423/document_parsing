@@ -10,6 +10,7 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
 from app.config import Settings
+from app.vector_versions import with_published_article_versions
 
 
 def _raise_for_status_with_details(resp: requests.Response) -> None:
@@ -282,6 +283,7 @@ class QdrantIndexer:
         user_id: int | None = None,
         knowledge_base_id: int | None = None,
         run_id: str | None = None,
+        article_versions: dict[int, str | None] | None = None,
     ) -> Filter | None:
         conditions = []
         if user_id is not None:
@@ -292,7 +294,8 @@ class QdrantIndexer:
             conditions.append(FieldCondition(key="run_id", match=MatchValue(value=run_id)))
         if source_filename:
             conditions.append(FieldCondition(key="source_filename", match=MatchValue(value=source_filename)))
-        return Filter(must=conditions) if conditions else None
+        base = Filter(must=conditions)
+        return with_published_article_versions(base, article_versions) if conditions or article_versions is not None else None
 
     @staticmethod
     def _tokenize(text: str) -> list[str]:
@@ -456,14 +459,15 @@ class QdrantIndexer:
         max_points: int = 2000,
         user_id: int | None = None,
         knowledge_base_id: int | None = None,
+        article_versions: dict[int, str | None] | None = None,
     ) -> list[dict]:
         if not self.ensure_collection(create_if_missing=False):
             return []
-
         records = self._scan_keyword_candidates(
             source_filename=None,
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
+            article_versions=article_versions,
             max_points=max(100, min(max_points, 10000)),
         )
         grouped: dict[str, dict] = {}
@@ -510,10 +514,14 @@ class QdrantIndexer:
         source_filename: str | None = None,
         user_id: int | None = None,
         knowledge_base_id: int | None = None,
+        article_versions: dict[int, str | None] | None = None,
     ) -> list[dict]:
         if not self.ensure_collection(create_if_missing=False):
             return []
-        query_filter = self._build_query_filter(source_filename, user_id=user_id, knowledge_base_id=knowledge_base_id)
+        query_filter = self._build_query_filter(
+            source_filename, user_id=user_id, knowledge_base_id=knowledge_base_id,
+            article_versions=article_versions,
+        )
         results = self.client.search(
             collection_name=self.collection,
             query_vector=query_vector,
@@ -531,11 +539,13 @@ class QdrantIndexer:
         user_id: int | None,
         knowledge_base_id: int | None,
         max_points: int,
+        article_versions: dict[int, str | None] | None = None,
     ) -> list:
         query_filter = self._build_query_filter(
             source_filename,
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
+            article_versions=article_versions,
         )
         records = []
         offset = None
@@ -563,6 +573,7 @@ class QdrantIndexer:
         user_id: int | None = None,
         knowledge_base_id: int | None = None,
         max_points: int = 500,
+        article_versions: dict[int, str | None] | None = None,
     ) -> list[dict]:
         if not self.ensure_collection(create_if_missing=False):
             return []
@@ -577,6 +588,7 @@ class QdrantIndexer:
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             max_points=max(50, min(max_points, self.KEYWORD_SCAN_LIMIT)),
+            article_versions=article_versions,
         )
         docs = []
         for item in candidates:
@@ -650,6 +662,7 @@ class QdrantIndexer:
         source_filename: str | None = None,
         user_id: int | None = None,
         knowledge_base_id: int | None = None,
+        article_versions: dict[int, str | None] | None = None,
     ) -> list[dict]:
         candidate_size = max(top_k * 4, 20)
         semantic_hits = self._search_semantic_chunks(
@@ -658,6 +671,7 @@ class QdrantIndexer:
             source_filename=source_filename,
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
+            article_versions=article_versions,
         )
         keyword_hits = self._search_keyword_chunks(
             query_text=query_text,
@@ -666,6 +680,7 @@ class QdrantIndexer:
             user_id=user_id,
             knowledge_base_id=knowledge_base_id,
             max_points=max(top_k * 120, 400),
+            article_versions=article_versions,
         )
 
         semantic_norm = self._normalize_scores(semantic_hits)
@@ -697,6 +712,7 @@ class QdrantIndexer:
         user_id: int | None = None,
         knowledge_base_id: int | None = None,
         retrieval_mode: str = "semantic",
+        article_versions: dict[int, str | None] | None = None,
     ) -> list[dict]:
         mode = (retrieval_mode or "semantic").lower()
         if mode == "keyword":
@@ -707,6 +723,7 @@ class QdrantIndexer:
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
                 max_points=max(top_k * 120, 400),
+                article_versions=article_versions,
             )
         if mode == "hybrid":
             if query_vector is None:
@@ -718,6 +735,7 @@ class QdrantIndexer:
                 source_filename=source_filename,
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
+                article_versions=article_versions,
             )
         if mode == "semantic":
             if query_vector is None:
@@ -728,5 +746,6 @@ class QdrantIndexer:
                 source_filename=source_filename,
                 user_id=user_id,
                 knowledge_base_id=knowledge_base_id,
+                article_versions=article_versions,
             )
         raise ValueError(f"Unsupported retrieval mode: {retrieval_mode}")

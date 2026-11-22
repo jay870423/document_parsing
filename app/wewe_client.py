@@ -62,12 +62,21 @@ class WeWeRssClient:
             headers["Authorization"] = self.auth_code
         return headers
 
-    def _request(self, method: str, path: str, params: dict | None = None, json_body: dict | None = None) -> object:
+    def _request(
+        self,
+        method: str,
+        path: str,
+        params: dict | None = None,
+        json_body: dict | None = None,
+        timeout: int | None = None,
+        retry: bool = True,
+    ) -> object:
         if not self.base_url:
             raise WeWeError("WEWE_BASE_URL is not configured")
         url = self.base_url + path
         last_error: Exception | None = None
-        for attempt in range(self.max_retries):
+        attempts = self.max_retries if retry else 1
+        for attempt in range(attempts):
             try:
                 resp = self.session.request(
                     method,
@@ -75,9 +84,9 @@ class WeWeRssClient:
                     params=params,
                     json=json_body,
                     headers=self._headers(),
-                    timeout=self.timeout,
+                    timeout=timeout or self.timeout,
                 )
-                if resp.status_code >= 500 and attempt < self.max_retries - 1:
+                if resp.status_code >= 500 and attempt < attempts - 1:
                     time.sleep(1.0 * (attempt + 1))
                     continue
                 if not resp.ok:
@@ -87,7 +96,7 @@ class WeWeRssClient:
                 raise
             except Exception as exc:
                 last_error = exc
-                if attempt < self.max_retries - 1:
+                if attempt < attempts - 1:
                     time.sleep(1.0 * (attempt + 1))
                     continue
         raise WeWeError("upstream request failed: " + str(last_error))
@@ -172,8 +181,17 @@ class WeWeRssClient:
         return items
 
     # -- trpc (可选的来源/文章管理) -------------------------------
-    def trpc(self, procedure: str, payload: dict | None = None) -> object:
-        data = self._request("POST", "/trpc/%s" % procedure.lstrip("/"), json_body={"json": payload or {}})
+    def trpc(
+        self,
+        procedure: str,
+        payload: dict | None = None,
+        timeout: int | None = None,
+        retry: bool = True,
+    ) -> object:
+        data = self._request(
+            "POST", "/trpc/%s" % procedure.lstrip("/"), json_body={"json": payload or {}},
+            timeout=timeout, retry=retry,
+        )
         if not isinstance(data, dict):
             raise WeWeError("unexpected trpc payload")
         if "error" in data and data.get("error"):
@@ -195,6 +213,100 @@ class WeWeRssClient:
         data = self.trpc("article.list", payload)
         items = data.get("items") if isinstance(data, dict) else None
         return items if isinstance(items, list) else []
+
+    # -- 扫码账号与公众号订阅 -------------------------------------
+    def create_login_url(self) -> dict:
+        data = self.trpc("platform.createLoginUrl", {})
+        if not isinstance(data, dict):
+            raise WeWeError("unexpected login URL payload")
+        login_id = str(data.get("uuid") or "").strip()
+        scan_url = str(data.get("scanUrl") or "").strip()
+        if not login_id or not scan_url.startswith(("https://", "http://")):
+            raise WeWeError("upstream returned an invalid QR login session")
+        return {"login_id": login_id, "scan_url": scan_url}
+
+    def get_login_result(self, login_id: str) -> dict:
+        target = (login_id or "").strip()
+        if not target or len(target) > 256:
+            raise WeWeError("valid login id is required")
+        # 上游该接口会长轮询等待扫码；不做重试，避免一次扫码产生多个长请求。
+        data = self.trpc("platform.getLoginResult", {"id": target}, timeout=125, retry=False)
+        if not isinstance(data, dict):
+            raise WeWeError("unexpected login result payload")
+        return data
+
+    def add_account(self, login_result: dict) -> dict:
+        account_id = str(login_result.get("vid") or "").strip()
+        name = str(login_result.get("username") or "").strip()
+        token = str(login_result.get("token") or "").strip()
+        if not account_id or not name or not token:
+            raise WeWeError("QR login has not completed")
+        data = self.trpc(
+            "account.add",
+            {"id": account_id, "name": name, "token": token, "status": 1},
+        )
+        # account.add 的上游响应也含 token；适配器出口只允许公开字段。
+        if not isinstance(data, dict):
+            raise WeWeError("unexpected account payload")
+        return {
+            "id": str(data.get("id") or account_id),
+            "name": str(data.get("name") or name),
+            "status": int(data.get("status") if data.get("status") is not None else 1),
+        }
+
+    def list_accounts(self) -> list[dict]:
+        data = self.trpc("account.list", {"limit": 1000})
+        if not isinstance(data, dict):
+            raise WeWeError("unexpected account list payload")
+        blocked = {str(item) for item in (data.get("blocks") or [])}
+        accounts = []
+        for item in data.get("items") or []:
+            if not isinstance(item, dict) or not item.get("id"):
+                continue
+            account_id = str(item["id"])
+            accounts.append({
+                "id": account_id,
+                "name": str(item.get("name") or account_id),
+                "status": int(item.get("status") if item.get("status") is not None else 0),
+                "blocked": account_id in blocked,
+                "updated_at": str(item.get("updatedAt") or ""),
+            })
+        return accounts
+
+    def get_mp_info(self, share_link: str) -> dict:
+        target = (share_link or "").strip()
+        if not target.startswith("https://mp.weixin.qq.com/s/") or len(target) > 2000:
+            raise WeWeError("share link must start with https://mp.weixin.qq.com/s/")
+        data = self.trpc("platform.getMpInfo", {"wxsLink": target})
+        item = data[0] if isinstance(data, list) and data else None
+        if not isinstance(item, dict) or not item.get("id") or not item.get("name"):
+            raise WeWeError("upstream could not resolve the shared WeChat article")
+        return {
+            "id": str(item["id"]),
+            "name": str(item["name"]),
+            "cover": str(item.get("cover") or ""),
+            "intro": str(item.get("intro") or ""),
+            "updateTime": int(item.get("updateTime") or time.time()),
+        }
+
+    def add_feed(self, info: dict) -> dict:
+        payload = {
+            "id": str(info["id"]),
+            "mpName": str(info["name"]),
+            "mpCover": str(info.get("cover") or ""),
+            "mpIntro": str(info.get("intro") or ""),
+            "updateTime": int(info.get("updateTime") or time.time()),
+            "status": 1,
+        }
+        data = self.trpc("feed.add", payload)
+        if not isinstance(data, dict) or not data.get("id"):
+            raise WeWeError("upstream failed to save the WeChat subscription")
+        return {
+            "upstream_feed_id": str(data["id"]),
+            "name": str(data.get("mpName") or payload["mpName"]),
+            "intro": str(data.get("mpIntro") or payload["mpIntro"]),
+            "cover_url": str(data.get("mpCover") or payload["mpCover"]),
+        }
 
     def ping(self) -> dict:
         feeds = self.list_feeds()

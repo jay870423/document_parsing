@@ -20,6 +20,8 @@
 
 ## 快速启动
 
+账号、会话、订阅、用量、知识库元数据与 WeWe 采集状态统一存放在独立 MySQL 8 数据库；旧 SQLite 文件仅供离线迁移脚本只读使用。启动前请按 `.env.example` 配置 `MYSQL_*`，或先完成 `deploy/mysql/README.md` 中的备份与迁移流程。
+
 1. 复制配置文件
 
 ```powershell
@@ -194,9 +196,14 @@ DOUBAO_CHAT_MODEL=doubao-pro-32k            # 或 endpoint_id_xxx
 
 ## Docker（可选）
 
+生产环境只重建本项目的 app，不使用 `docker compose down`，也不重启 nginx/Qdrant：
+
 ```bash
-docker compose up -d --build
+sudo docker compose build app
+sudo docker compose up -d --no-deps app
 ```
+
+MySQL socket、迁移、备份、双站验收和回滚见 `deploy/mysql/README.md` 与 `scripts/backup_doc.sh`、`scripts/verify_doc_study.sh`。
 
 ## 微信公众号 / 网站采集集成（wewe-rss）
 

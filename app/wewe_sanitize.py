@@ -44,6 +44,9 @@ _BLOCK_TAGS = {
     "p", "div", "section", "article", "li", "tr", "blockquote", "pre",
     "h1", "h2", "h3", "h4", "h5", "h6", "figure", "figcaption", "table",
 }
+_DROP_START_RE = re.compile(
+    r"(?is)<(" + "|".join(sorted(DROP_WITH_CONTENT)) + r")\b[^>]*>"
+)
 
 
 def _is_safe_url(value: str, allow_data_image: bool = False) -> bool:
@@ -69,6 +72,7 @@ class _Sanitizer(HTMLParser):
         self.output: list[str] = []
         self.text_parts: list[str] = []
         self.images: list[dict] = []
+        self.dropped_parts: list[str] = []
         self._skip_depth = 0
         self._skip_tag: str | None = None
 
@@ -103,8 +107,6 @@ class _Sanitizer(HTMLParser):
                 if not _is_safe_url(val, allow_data_image=(lname == "src" and tag == "img")):
                     continue
                 val = self._resolve(val)
-                if lname == "src" and tag == "img":
-                    self._register_image(val, "")
             parts.append(" " + lname + "=\"" + escape(val, quote=True) + "\"")
         return "".join(parts)
 
@@ -140,16 +142,29 @@ class _Sanitizer(HTMLParser):
         if tag == "img":
             alt = ""
             src = ""
+            lazy_src = ""
+            normalized_attrs = []
             for name, value in attrs:
                 lname = (name or "").lower()
                 if lname == "alt":
                     alt = value or ""
-                elif lname == "src":
+                if lname == "src":
                     src = value or ""
-            attr_str = self._clean_attrs(tag, attrs)
-            if src and _is_safe_url(src, allow_data_image=True):
+                    continue
+                if lname in {"data-src", "data-original"}:
+                    lazy_src = value or lazy_src
+                    continue
+                normalized_attrs.append((name, value))
+            # 微信正文常用 data-src；占位 data URI 不能覆盖真实图片地址。
+            if lazy_src and (not src or src.lower().startswith("data:")):
+                src = lazy_src
+            if src:
+                normalized_attrs.append(("src", src))
+            attr_str = self._clean_attrs(tag, normalized_attrs)
+            if src and not src.lower().startswith("data:") and _is_safe_url(src):
                 self._register_image(self._resolve(src), alt)
-            self.output.append("<img" + attr_str + " />")
+            if ' src="' in attr_str:
+                self.output.append("<img" + attr_str + " />")
             return
         attr_str = self._clean_attrs(tag, attrs)
         self.output.append("<" + tag + attr_str + ">")
@@ -179,6 +194,7 @@ class _Sanitizer(HTMLParser):
 
     def handle_data(self, data: str) -> None:
         if self._skip_depth:
+            self.dropped_parts.append(data or "")
             return
         text = (data or "").replace("\u00a0", " ").strip()
         if not text:
@@ -187,10 +203,29 @@ class _Sanitizer(HTMLParser):
         self.text_parts.append(text)
 
 
+def _repair_unclosed_drop_elements(raw: str) -> str:
+    """Fail closed at an unclosed script/style-like element.
+
+    A block-looking tag inside JavaScript is data, not an HTML recovery point.
+    Discarding the malformed tail is safer than admitting code into RAG/feed text.
+    """
+    offset = 0
+    for _ in range(raw.count("<") + 1):
+        start = _DROP_START_RE.search(raw, offset)
+        if start is None:
+            break
+        tag = start.group(1).lower()
+        close = re.search(r"(?is)</\s*" + re.escape(tag) + r"\s*>", raw[start.end():])
+        if close is None:
+            return raw[:start.start()]
+        offset = start.end() + close.end()
+    return raw
+
+
 def sanitize_html(html: str, base_url: str = "") -> dict:
     """清洗 HTML，返回清洗后 HTML、纯文本正文与图片列表。"""
 
-    raw = html or ""
+    raw = _repair_unclosed_drop_elements(html or "")
     parser = _Sanitizer(base_url=base_url)
     try:
         parser.feed(raw)
@@ -214,7 +249,8 @@ def sanitize_html(html: str, base_url: str = "") -> dict:
 def strip_tags(html: str) -> str:
     """快速提取纯文本（不做完整清洗，用于标题/摘要场景）。"""
 
-    cleaned = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", html or "")
+    raw = _repair_unclosed_drop_elements(html or "")
+    cleaned = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
     cleaned = re.sub(r"(?s)<[^>]+>", " ", cleaned)
     cleaned = re.sub(r"&nbsp;?", " ", cleaned)
     cleaned = re.sub(r"&amp;", "&", cleaned)

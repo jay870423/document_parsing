@@ -4,11 +4,9 @@ import hashlib
 import hmac
 import json
 import secrets
-import sqlite3
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Any, Iterator
 
 
@@ -87,244 +85,80 @@ class ApiKeyContext:
     is_admin: bool
 
 
+@dataclass
+class CallReservation:
+    """One quota unit atomically reserved before an expensive operation."""
+
+    user_id: int
+    subscription_id: int
+    call_count: int = 1
+    reservation_id: str = ""
+    settled: bool = False
+
+
+from app.config import Settings, get_settings
+from app.mysql import Connection, IntegrityError, Row, connect as mysql_connect
+from app.mysql_schema import BILLING_SCHEMA
+
+PLAN_SEEDS = (
+    ("free_trial", "新人免费体验包", "trial", 0, 3, 0),
+    ("personal_light", "个人轻量版", "month", 990, 100, 10),
+    ("personal_standard", "个人标准版", "month", 1990, 300, 20),
+    ("personal_pro", "专业增强版", "month", 4990, 1000, 30),
+)
+
+
 class BillingStore:
-    def __init__(self, db_path: str = "data/app.db"):
-        self.db_path = Path(db_path)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+    def __init__(self, settings: Settings | None = None):
+        self.settings = settings or get_settings()
+        if not self.settings.mysql_database or not self.settings.mysql_user:
+            raise RuntimeError("MYSQL_DATABASE 和 MYSQL_USER 必须显式配置")
         self.init_db()
 
     @contextmanager
-    def connect(self) -> Iterator[sqlite3.Connection]:
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        conn.execute("PRAGMA foreign_keys = ON")
-        try:
+    def connect(self) -> Iterator[Connection]:
+        with mysql_connect(self.settings) as conn:
             yield conn
-            conn.commit()
-        finally:
-            conn.close()
 
     def init_db(self) -> None:
         with self.connect() as conn:
-            conn.executescript(
-                """
-                CREATE TABLE IF NOT EXISTS users (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    email TEXT NOT NULL UNIQUE,
-                    phone TEXT UNIQUE,
-                    password_salt TEXT NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    is_admin INTEGER NOT NULL DEFAULT 0,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS sessions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    token_hash TEXT NOT NULL UNIQUE,
-                    expires_at TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS api_keys (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    name TEXT NOT NULL,
-                    key_prefix TEXT NOT NULL,
-                    key_hash TEXT NOT NULL UNIQUE,
-                    raw_key TEXT,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL,
-                    last_used_at TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS plans (
-                    code TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    billing_period TEXT NOT NULL,
-                    price_cents INTEGER NOT NULL,
-                    included_calls INTEGER NOT NULL,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    sort_order INTEGER NOT NULL DEFAULT 0
-                );
-
-                CREATE TABLE IF NOT EXISTS subscriptions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    plan_code TEXT NOT NULL REFERENCES plans(code),
-                    status TEXT NOT NULL,
-                    starts_at TEXT NOT NULL,
-                    ends_at TEXT NOT NULL,
-                    call_quota INTEGER NOT NULL,
-                    used_calls INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS usage_events (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    api_key_id INTEGER,
-                    endpoint TEXT NOT NULL,
-                    method TEXT NOT NULL,
-                    call_count INTEGER NOT NULL DEFAULT 1,
-                    input_tokens INTEGER NOT NULL DEFAULT 0,
-                    output_tokens INTEGER NOT NULL DEFAULT 0,
-                    status_code INTEGER NOT NULL,
-                    latency_ms INTEGER NOT NULL DEFAULT 0,
-                    meta_json TEXT NOT NULL DEFAULT '{}',
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS knowledge_bases (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    name TEXT NOT NULL,
-                    description TEXT NOT NULL DEFAULT '',
-                    is_default INTEGER NOT NULL DEFAULT 0,
-                    is_active INTEGER NOT NULL DEFAULT 1,
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS knowledge_documents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    knowledge_base_id INTEGER NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-                    run_id TEXT NOT NULL,
-                    source_filename TEXT NOT NULL,
-                    source_type TEXT NOT NULL DEFAULT '',
-                    status TEXT NOT NULL,
-                    vector_count INTEGER NOT NULL DEFAULT 0,
-                    text_block_count INTEGER NOT NULL DEFAULT 0,
-                    image_count INTEGER NOT NULL DEFAULT 0,
-                    artifact_path TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS rag_query_logs (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    api_key_id INTEGER,
-                    knowledge_base_id INTEGER NOT NULL REFERENCES knowledge_bases(id) ON DELETE CASCADE,
-                    query TEXT NOT NULL,
-                    answer TEXT NOT NULL,
-                    retrieval_mode TEXT NOT NULL,
-                    top_k INTEGER NOT NULL,
-                    source_filename TEXT,
-                    hit_count INTEGER NOT NULL DEFAULT 0,
-                    citations_json TEXT NOT NULL DEFAULT '[]',
-                    feedback_rating TEXT,
-                    feedback_note TEXT,
-                    feedback_at TEXT,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS slider_challenges (
-                    id TEXT PRIMARY KEY,
-                    target_hash TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    used_at TEXT,
-                    ip_address TEXT NOT NULL,
-                    phone TEXT,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS sms_verification_codes (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    phone TEXT NOT NULL,
-                    code_salt TEXT NOT NULL,
-                    code_hash TEXT NOT NULL,
-                    purpose TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    used_at TEXT,
-                    attempts INTEGER NOT NULL DEFAULT 0,
-                    locked_until TEXT,
-                    ip_address TEXT NOT NULL,
-                    provider_message_id TEXT,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS agreement_consents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    action TEXT NOT NULL,
-                    terms_version TEXT NOT NULL,
-                    privacy_version TEXT NOT NULL,
-                    document_hash TEXT NOT NULL,
-                    ip_address TEXT NOT NULL,
-                    user_agent TEXT NOT NULL,
-                    accepted_at TEXT NOT NULL
-                );
-
-                CREATE TABLE IF NOT EXISTS purchase_intents (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-                    plan_code TEXT NOT NULL REFERENCES plans(code),
-                    status TEXT NOT NULL DEFAULT 'pending',
-                    contact_note TEXT NOT NULL DEFAULT '',
-                    created_at TEXT NOT NULL
-                );
-                """
-            )
-            self._ensure_column(conn, "users", "phone", "TEXT")
-            self._ensure_column(conn, "api_keys", "raw_key", "TEXT")
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_phone_unique ON users(phone) WHERE phone IS NOT NULL AND phone != ''"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_knowledge_bases_user ON knowledge_bases(user_id, is_active, created_at)"
-            )
-            conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS idx_knowledge_bases_default ON knowledge_bases(user_id) WHERE is_default = 1 AND is_active = 1"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_knowledge_documents_kb ON knowledge_documents(user_id, knowledge_base_id, created_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_rag_query_logs_user ON rag_query_logs(user_id, knowledge_base_id, created_at)"
-            )
-            conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_purchase_intents_user ON purchase_intents(user_id, created_at)"
-            )
+            for statement in BILLING_SCHEMA:
+                conn.execute(statement)
+            self._ensure_column(conn, "users", "phone", "VARCHAR(32) NULL")
+            self._ensure_column(conn, "api_keys", "raw_key", "VARCHAR(255) NULL")
             self._seed_plans(conn)
 
-    @staticmethod
-    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-        columns = [str(row["name"]) for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        if column not in columns:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+    def _ensure_column(self, conn: Connection, table: str, column: str, definition: str) -> None:
+        allowed = {("users", "phone"), ("api_keys", "raw_key")}
+        if (table, column) not in allowed:
+            raise ValueError("不允许的 schema 变更")
+        row = conn.execute(
+            """SELECT 1 FROM information_schema.columns
+               WHERE table_schema = ? AND table_name = ? AND column_name = ?""",
+            (self.settings.mysql_database, table, column),
+        ).fetchone()
+        if not row:
+            conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
 
-    def _seed_plans(self, conn: sqlite3.Connection) -> None:
-        plans = [
-            ("free_trial", "新人免费体验包", "trial", 0, 3, 0),
-            ("personal_light", "个人轻量版", "month", 990, 100, 10),
-            ("personal_standard", "个人标准版", "month", 1990, 300, 20),
-            ("personal_pro", "专业增强版", "month", 4990, 1000, 30),
-        ]
+    def _seed_plans(self, conn: Connection) -> None:
+        plans = list(PLAN_SEEDS)
         for code, name, period, price, included, sort_order in plans:
             conn.execute(
                 """
                 INSERT INTO plans (code, name, billing_period, price_cents, included_calls, sort_order)
                 VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(code) DO UPDATE SET
-                    name=excluded.name,
-                    billing_period=excluded.billing_period,
-                    price_cents=excluded.price_cents,
-                    included_calls=excluded.included_calls,
-                    sort_order=excluded.sort_order
+                ON DUPLICATE KEY UPDATE
+                    name=VALUES(name), billing_period=VALUES(billing_period),
+                    price_cents=VALUES(price_cents), included_calls=VALUES(included_calls),
+                    sort_order=VALUES(sort_order)
                 """,
                 (code, name, period, price, included, sort_order),
             )
         active_codes = [code for code, *_ in plans]
         placeholders = ",".join("?" for _ in active_codes)
-        conn.execute(
-            f"UPDATE plans SET is_active = 0 WHERE code NOT IN ({placeholders})",
-            active_codes,
-        )
+        conn.execute(f"UPDATE plans SET is_active = 0 WHERE code NOT IN ({placeholders})", active_codes)
 
-    def _grant_signup_trial(self, conn: sqlite3.Connection, user_id: int) -> None:
+    def _grant_signup_trial(self, conn: Connection, user_id: int) -> None:
         plan = conn.execute("SELECT * FROM plans WHERE code = 'free_trial' AND is_active = 1").fetchone()
         if not plan:
             return
@@ -376,7 +210,7 @@ class BillingStore:
                     """,
                     (email_norm, salt, pwd_hash, 1 if is_admin else 0, to_iso(utc_now())),
                 )
-            except sqlite3.IntegrityError as exc:
+            except IntegrityError as exc:
                 raise ValueError("该邮箱已注册") from exc
             if not is_admin:
                 self._grant_signup_trial(conn, int(cur.lastrowid))
@@ -399,7 +233,7 @@ class BillingStore:
                     """,
                     (email_alias, phone_norm, salt, pwd_hash, 1 if is_admin else 0, to_iso(utc_now())),
                 )
-            except sqlite3.IntegrityError as exc:
+            except IntegrityError as exc:
                 raise ValueError("该手机号已注册") from exc
             if not is_admin:
                 self._grant_signup_trial(conn, int(cur.lastrowid))
@@ -570,13 +404,14 @@ class BillingStore:
             ).fetchall()
             return [self._api_key_public(row) for row in rows]
 
-    def ensure_default_knowledge_base(self, user_id: int, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+    def ensure_default_knowledge_base(self, user_id: int, conn: Connection | None = None) -> dict[str, Any]:
         own_conn = conn is None
         if own_conn:
             ctx = self.connect()
             conn = ctx.__enter__()
         try:
-            assert conn is not None
+            if conn is None:
+                raise RuntimeError("BillingStore connection is unavailable")
             row = conn.execute(
                 """
                 SELECT * FROM knowledge_bases
@@ -904,13 +739,14 @@ class BillingStore:
                 "price_yuan": round(int(row["price_cents"]) / 100, 2),
             }
 
-    def get_active_subscription(self, user_id: int, conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
+    def get_active_subscription(self, user_id: int, conn: Connection | None = None) -> dict[str, Any] | None:
         own_conn = conn is None
         if own_conn:
             ctx = self.connect()
             conn = ctx.__enter__()
         try:
-            assert conn is not None
+            if conn is None:
+                raise RuntimeError("BillingStore connection is unavailable")
             now = to_iso(utc_now())
             row = conn.execute(
                 """
@@ -932,12 +768,26 @@ class BillingStore:
                 ctx.__exit__(None, None, None)
 
     def ensure_quota(self, user_id: int) -> dict[str, Any]:
+        # The dependency-layer precheck must not strand the final quota unit
+        # behind an abandoned reservation that only reserve_call would refund.
+        self.reconcile_abandoned_reservations()
         sub = self.get_active_subscription(user_id)
         if not sub:
             raise PermissionError("当前账号没有可用订阅")
         if int(sub["remaining_calls"]) <= 0:
             raise PermissionError("当前订阅调用次数已用完")
         return sub
+
+    def reserve_call(self, user_id: int, call_count: int = 1) -> CallReservation:
+        """Persistently reserve quota before invoking a paid dependency."""
+        if call_count < 1:
+            raise ValueError("call_count must be positive")
+        # Any live worker can help clean up a crashed peer. Only reservations
+        # older than the conservative TTL are eligible; normal calls are untouched.
+        self.reconcile_abandoned_reservations()
+        now = to_iso(utc_now())
+        with self.connect() as conn:
+            return self._reserve_call_in_connection(conn, user_id, call_count, now)
 
     def consume_call(
         self,
@@ -949,37 +799,212 @@ class BillingStore:
         latency_ms: int,
         input_tokens: int = 0,
         output_tokens: int = 0,
-        meta: dict[str, Any] | None = None,
+        meta: dict | None = None,
         call_count: int = 1,
+        reservation: CallReservation | None = None,
     ) -> None:
-        with self.connect() as conn:
-            sub = self.get_active_subscription(user_id, conn=conn)
-            if sub and 200 <= status_code < 400:
-                conn.execute(
-                    "UPDATE subscriptions SET used_calls = used_calls + ? WHERE id = ?",
-                    (call_count, int(sub["id"])),
+        """Settle a persistent reservation, or charge a successful legacy call."""
+        if reservation is not None:
+            if reservation.settled:
+                raise RuntimeError("call reservation already settled")
+            if reservation.user_id != user_id:
+                raise ValueError("reservation user mismatch")
+            if not reservation.reservation_id:
+                raise ValueError("persistent reservation id is required")
+        now = to_iso(utc_now())
+        successful_billing = 200 <= int(status_code) < 400 and call_count > 0
+        if reservation is not None:
+            with self.connect() as conn:
+                state = "succeeded" if successful_billing else "failed"
+                claimed = conn.execute(
+                    """UPDATE call_reservations
+                       SET state = ?, settled_at = ?
+                       WHERE reservation_id = ? AND user_id = ? AND subscription_id = ?
+                         AND state = 'reserved'""",
+                    (
+                        state,
+                        now,
+                        reservation.reservation_id,
+                        user_id,
+                        reservation.subscription_id,
+                    ),
                 )
-            conn.execute(
-                """
-                INSERT INTO usage_events
-                    (user_id, api_key_id, endpoint, method, call_count, input_tokens, output_tokens,
-                     status_code, latency_ms, meta_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
+                if claimed.rowcount != 1:
+                    raise RuntimeError("call reservation already settled")
+                if not successful_billing:
+                    released = conn.execute(
+                        """UPDATE subscriptions SET used_calls = used_calls - ?
+                           WHERE id = ? AND used_calls >= ?""",
+                        (
+                            reservation.call_count,
+                            reservation.subscription_id,
+                            reservation.call_count,
+                        ),
+                    )
+                    if released.rowcount != 1:
+                        raise RuntimeError("quota reservation ledger is inconsistent")
+                self._insert_usage_event(
+                    conn,
                     user_id,
                     api_key_id,
                     endpoint,
                     method,
-                    call_count,
-                    input_tokens,
-                    output_tokens,
                     status_code,
                     latency_ms,
-                    json.dumps(meta or {}, ensure_ascii=False),
-                    to_iso(utc_now()),
-                ),
+                    input_tokens,
+                    output_tokens,
+                    meta,
+                    reservation.call_count if successful_billing else 0,
+                )
+            reservation.settled = True
+            return
+
+        # Compatibility path for older callers. Only successful calls consume
+        # quota, and the conditional UPDATE closes the old overdraw race.
+        with self.connect() as conn:
+            if successful_billing:
+                updated = conn.execute(
+                    """UPDATE subscriptions
+                       SET used_calls = used_calls + ?
+                       WHERE id = (
+                           SELECT id FROM (
+                               SELECT id FROM subscriptions
+                               WHERE user_id = ? AND status = 'active'
+                                 AND starts_at <= ? AND ends_at > ?
+                               ORDER BY ends_at DESC LIMIT 1
+                           ) AS active_subscription
+                       ) AND used_calls + ? <= call_quota""",
+                    (call_count, user_id, now, now, call_count),
+                )
+                if updated.rowcount != 1:
+                    raise PermissionError("套餐剩余调用次数不足")
+            self._insert_usage_event(
+                conn,
+                user_id,
+                api_key_id,
+                endpoint,
+                method,
+                status_code,
+                latency_ms,
+                input_tokens,
+                output_tokens,
+                meta,
+                call_count,
             )
+
+    def reconcile_abandoned_reservations(
+        self,
+        older_than_seconds: int = 6 * 60 * 60,
+        batch_size: int = 100,
+    ) -> int:
+        """Refund expired reservations left by terminated workers exactly once."""
+        if older_than_seconds < 0:
+            raise ValueError("older_than_seconds must not be negative")
+        batch_size = max(1, min(int(batch_size), 1000))
+        cutoff = to_iso(utc_now() - timedelta(seconds=older_than_seconds))
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT id, subscription_id, call_count
+                   FROM call_reservations
+                   WHERE state = 'reserved' AND created_at <= ?
+                   ORDER BY id LIMIT ?""",
+                (cutoff, batch_size),
+            ).fetchall()
+        refunded = 0
+        for row in rows:
+            with self.connect() as conn:
+                now = to_iso(utc_now())
+                claimed = conn.execute(
+                    """UPDATE call_reservations
+                       SET state = 'expired', settled_at = ?
+                       WHERE id = ? AND state = 'reserved'""",
+                    (now, row["id"]),
+                )
+                if claimed.rowcount != 1:
+                    continue
+                released = conn.execute(
+                    """UPDATE subscriptions SET used_calls = used_calls - ?
+                       WHERE id = ? AND used_calls >= ?""",
+                    (row["call_count"], row["subscription_id"], row["call_count"]),
+                )
+                if released.rowcount != 1:
+                    raise RuntimeError("abandoned reservation ledger is inconsistent")
+                refunded += 1
+        return refunded
+
+    @staticmethod
+    def _insert_usage_event(
+        conn: Connection,
+        user_id: int,
+        api_key_id: int | None,
+        endpoint: str,
+        method: str,
+        status_code: int,
+        latency_ms: int,
+        input_tokens: int,
+        output_tokens: int,
+        meta: dict | None,
+        call_count: int,
+    ) -> None:
+        conn.execute(
+            """INSERT INTO usage_events
+               (user_id, api_key_id, endpoint, method, call_count, input_tokens,
+                output_tokens, status_code, latency_ms, meta_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                user_id,
+                api_key_id,
+                endpoint,
+                method,
+                call_count,
+                input_tokens,
+                output_tokens,
+                status_code,
+                latency_ms,
+                json.dumps(meta or {}, ensure_ascii=False),
+                to_iso(utc_now()),
+            ),
+        )
+
+    def _reserve_call_in_connection(
+        self,
+        conn: Connection,
+        user_id: int,
+        call_count: int,
+        now: str,
+    ) -> CallReservation:
+        if call_count < 1:
+            raise ValueError("call_count must be positive")
+        row = conn.execute(
+            """SELECT id FROM subscriptions
+               WHERE user_id = ? AND status = 'active' AND starts_at <= ? AND ends_at > ?
+               ORDER BY ends_at DESC LIMIT 1""",
+            (user_id, now, now),
+        ).fetchone()
+        if not row:
+            raise PermissionError("暂无有效订阅，请先开通套餐")
+        subscription_id = int(row["id"])
+        updated = conn.execute(
+            """UPDATE subscriptions SET used_calls = used_calls + ?
+                   WHERE id = ? AND user_id = ? AND status = 'active'
+                     AND starts_at <= ? AND ends_at > ? AND used_calls + ? <= call_quota""",
+            (call_count, subscription_id, user_id, now, now, call_count),
+        )
+        if updated.rowcount != 1:
+            raise PermissionError("套餐剩余调用次数不足")
+        reservation_id = secrets.token_hex(16)
+        conn.execute(
+            """INSERT INTO call_reservations
+               (reservation_id, user_id, subscription_id, call_count, state, created_at)
+               VALUES (?, ?, ?, ?, 'reserved', ?)""",
+            (reservation_id, user_id, subscription_id, call_count, now),
+        )
+        return CallReservation(
+            user_id=user_id,
+            subscription_id=subscription_id,
+            call_count=call_count,
+            reservation_id=reservation_id,
+        )
 
     def list_users(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
@@ -1190,26 +1215,28 @@ class BillingStore:
                 return False, "验证码连续输错 5 次，已临时锁定"
             return False, f"验证码错误，还可尝试 {5 - attempts} 次"
 
-    def get_user_by_id(self, user_id: int, conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
+    def get_user_by_id(self, user_id: int, conn: Connection | None = None) -> dict[str, Any] | None:
         own_conn = conn is None
         if own_conn:
             ctx = self.connect()
             conn = ctx.__enter__()
         try:
-            assert conn is not None
+            if conn is None:
+                raise RuntimeError("BillingStore connection is unavailable")
             row = conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
             return self._user_public(row) if row else None
         finally:
             if own_conn:
                 ctx.__exit__(None, None, None)
 
-    def get_subscription(self, subscription_id: int, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+    def get_subscription(self, subscription_id: int, conn: Connection | None = None) -> dict[str, Any]:
         own_conn = conn is None
         if own_conn:
             ctx = self.connect()
             conn = ctx.__enter__()
         try:
-            assert conn is not None
+            if conn is None:
+                raise RuntimeError("BillingStore connection is unavailable")
             row = conn.execute(
                 """
                 SELECT s.*, p.name AS plan_name, p.price_cents, p.billing_period
@@ -1227,7 +1254,7 @@ class BillingStore:
                 ctx.__exit__(None, None, None)
 
     @staticmethod
-    def _user_public(row: sqlite3.Row) -> dict[str, Any]:
+    def _user_public(row: Row) -> dict[str, Any]:
         email = str(row["email"])
         phone = row["phone"] if "phone" in row.keys() else None
         return {
@@ -1241,7 +1268,7 @@ class BillingStore:
         }
 
     @staticmethod
-    def _api_key_public(row: sqlite3.Row) -> dict[str, Any]:
+    def _api_key_public(row: Row) -> dict[str, Any]:
         return {
             "id": int(row["id"]),
             "name": str(row["name"]),
@@ -1254,7 +1281,7 @@ class BillingStore:
         }
 
     @staticmethod
-    def _knowledge_base_public(row: sqlite3.Row) -> dict[str, Any]:
+    def _knowledge_base_public(row: Row) -> dict[str, Any]:
         keys = row.keys()
         return {
             "id": int(row["id"]),
@@ -1270,7 +1297,7 @@ class BillingStore:
         }
 
     @staticmethod
-    def _knowledge_document_public(row: sqlite3.Row) -> dict[str, Any]:
+    def _knowledge_document_public(row: Row) -> dict[str, Any]:
         return {
             "id": int(row["id"]),
             "user_id": int(row["user_id"]),
@@ -1288,7 +1315,7 @@ class BillingStore:
         }
 
     @staticmethod
-    def _rag_query_log_public(row: sqlite3.Row) -> dict[str, Any]:
+    def _rag_query_log_public(row: Row) -> dict[str, Any]:
         try:
             citations = json.loads(str(row["citations_json"] or "[]"))
         except Exception:
@@ -1313,7 +1340,7 @@ class BillingStore:
         }
 
     @staticmethod
-    def _subscription_public(row: sqlite3.Row) -> dict[str, Any]:
+    def _subscription_public(row: Row) -> dict[str, Any]:
         quota = int(row["call_quota"])
         used = int(row["used_calls"])
         return {

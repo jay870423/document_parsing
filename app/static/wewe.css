@@ -1,0 +1,272 @@
+/* WeWe onboarding and collection console. Loaded after console.html's base styles. */
+#weweView {
+  --wewe-soft: #f2f8f6;
+  --wewe-border: #d7e4e0;
+  color: #172033;
+}
+#weweView h2, #weweView h3, #weweView p { margin: 0; }
+#weweView h2 { font-size: 25px; line-height: 1.25; }
+#weweView h3 { font-size: 17px; line-height: 1.35; }
+#weweView p { margin-top: 6px; color: #667085; font-size: 13px; line-height: 1.65; }
+#weweView button, #weweView a, .wewe-qr-modal button, .wewe-qr-modal a {
+  min-height: 44px;
+  text-decoration: none;
+}
+#weweView input, #weweView select {
+  min-height: 46px;
+  font-size: 16px;
+  border: 2px solid #d5dfe5;
+}
+#weweView input:focus, #weweView select:focus {
+  border-color: #6bbab4;
+  box-shadow: 0 0 0 3px rgba(8,127,122,.10);
+  outline: none;
+}
+#weweView button:disabled {
+  opacity: .52;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
+  filter: grayscale(.55);
+}
+#weweView input:disabled, #weweView select:disabled {
+  color: #98a2b3;
+  background: #f2f4f7;
+  cursor: not-allowed;
+  opacity: .78;
+}
+.wewe-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 18px;
+  padding: 18px;
+  border-radius: 12px;
+  color: #fff;
+  background: linear-gradient(135deg, #123c3a, #087f7a);
+  box-shadow: 0 14px 34px rgba(8,127,122,.14);
+}
+.wewe-hero h2 { margin-top: 4px; color: #fff; }
+#weweView .wewe-hero p { max-width: 650px; color: rgba(255,255,255,.82); }
+.wewe-kicker { color: #75d7cc; font: 700 11px/1.3 Arial, sans-serif; letter-spacing: .12em; }
+.wewe-hero-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.wewe-hero .badge { color: #fff; border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.10); white-space: nowrap; }
+.wewe-hero .secondary { color: #fff; border-color: rgba(255,255,255,.45); background: rgba(255,255,255,.10); }
+.wewe-steps {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0,1fr));
+  gap: 8px;
+  margin: 14px 0;
+  padding: 0;
+  list-style: none;
+}
+.wewe-steps li {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid #dbe3ea;
+  border-radius: 9px;
+  color: #667085;
+  background: #fff;
+  font-size: 13px;
+}
+.wewe-steps li span {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #667085;
+  background: #edf1f5;
+  font-weight: 700;
+}
+.wewe-steps li.active { color: #087f7a; border-color: #9bcfc8; background: #f1faf7; }
+.wewe-steps li.active span { color: #fff; background: #087f7a; }
+.wewe-card {
+  margin-top: 12px;
+  padding: 16px;
+  border: 1px solid var(--wewe-border);
+  border-radius: 11px;
+  background: #fff;
+}
+.wewe-card-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.wewe-card-head > div:first-child { min-width: 0; }
+.wewe-card-head > button, .wewe-card-head > a { flex: none; }
+.wewe-card-head.compact { align-items: center; }
+.wewe-subscribe-card { border-color: #9bcfc8; background: linear-gradient(180deg,#fbfefc,#fff); }
+.wewe-subscribe-card label { margin-top: 14px; }
+.wewe-subscribe-row { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 9px; }
+.wewe-subscribe-row button { padding-inline: 20px; }
+.wewe-inline-state { margin-top: 9px; min-height: 22px; color: #667085; font-size: 13px; line-height: 1.65; }
+.wewe-inline-state.ok { color: #087f7a; }
+.wewe-inline-state.err { color: #b33838; }
+.wewe-risk-note { margin-top: 9px; color: #8a651e; font-size: 12px; line-height: 1.6; }
+.wewe-account-list, .wewe-source-list, .wewe-article-list, .wewe-task-list { display: grid; gap: 9px; margin-top: 13px; }
+.wewe-account-item {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 11px 12px;
+  border: 1px solid #e0e7ed;
+  border-radius: 9px;
+  background: #fafcfc;
+}
+.wewe-account-item.unavailable { background: #fffaf1; border-color: #ead8b4; }
+.wewe-account-icon, .wewe-avatar {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  color: #087f7a;
+  background: #e2f3ee;
+  font-weight: 800;
+}
+.wewe-account-main, .wewe-source-main, .wewe-article-main, .wewe-task-main { min-width: 0; flex: 1; }
+.wewe-item-title { color: #172033; font-size: 14px; font-weight: 700; line-height: 1.45; overflow-wrap: anywhere; }
+.wewe-item-meta { margin-top: 4px; color: #667085; font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
+.wewe-source-identity {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.wewe-source-identity:focus {
+  -webkit-line-clamp: unset;
+  overflow: visible;
+  outline: 2px solid #6bbab4;
+  outline-offset: 2px;
+}
+.wewe-status {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: #087f7a;
+  background: #e9f7f2;
+  font-size: 12px;
+  white-space: nowrap;
+}
+.wewe-status.warn { color: #9a6210; background: #fff2d9; }
+.wewe-status.err { color: #a43232; background: #ffeded; }
+.wewe-source-item, .wewe-article-item, .wewe-task-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 11px;
+  padding: 12px;
+  border: 1px solid #e0e7ed;
+  border-radius: 9px;
+  background: #fff;
+}
+.wewe-source-item { flex-wrap: wrap; }
+.wewe-source-actions { display: flex; flex-wrap: wrap; gap: 7px; width: 100%; padding-left: 49px; }
+.wewe-source-actions button, .wewe-source-actions a, .wewe-article-actions button, .wewe-article-actions a {
+  min-height: 40px;
+  padding: 7px 11px;
+  font-size: 13px;
+}
+.wewe-source-actions a { display: inline-flex; align-items: center; justify-content: center; }
+.wewe-feed-links { display: inline-flex; align-items: center; gap: 4px; }
+.wewe-feed-links a { color: #087f7a; border-color: #c7ded9; background: #f5fbf9; }
+.wewe-export-link { color: #087f7a; font-size: 13px; text-decoration: underline !important; }
+.wewe-export-link.disabled { color: #98a2b3; cursor: not-allowed; opacity: .65; }
+.wewe-advanced {
+  margin-top: 12px;
+  padding: 0 14px;
+  border: 1px solid #dfe5ec;
+  border-radius: 10px;
+  background: rgba(255,255,255,.72);
+}
+.wewe-advanced summary { min-height: 48px; padding: 14px 0; color: #475467; font-size: 14px; font-weight: 700; cursor: pointer; }
+.wewe-advanced > p { color: #667085; font-size: 13px; line-height: 1.6; }
+.wewe-advanced-form { display: grid; grid-template-columns: 180px minmax(0,1fr) minmax(140px,.6fr) auto; gap: 8px; padding: 12px 0 14px; }
+.wewe-filter-actions { display: flex; gap: 8px; align-items: center; max-width: 50%; }
+.wewe-filter-actions select { min-width: 160px; }
+.wewe-filter-actions button { flex: none; white-space: nowrap; }
+.wewe-article-actions { display: flex; gap: 7px; flex: none; }
+.wewe-article-actions a { display: inline-flex; align-items: center; color: #087f7a; }
+.wewe-task-item { align-items: center; }
+.wewe-task-metrics { flex: none; color: #475467; font-size: 12px; line-height: 1.7; text-align: right; }
+.wewe-task-error { margin-top: 5px; color: #b33838; font-size: 12px; overflow-wrap: anywhere; }
+.wewe-image-search { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; padding-top: 4px; }
+.wewe-image-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px; padding: 14px 0; }
+.wewe-image-card { margin: 0; overflow: hidden; border: 1px solid #dfe5ec; border-radius: 9px; background: #fff; }
+.wewe-image-card img { display: block; width: 100%; aspect-ratio: 16/10; object-fit: cover; background: #eef2f5; }
+.wewe-image-card div { padding: 9px; color: #475467; font-size: 12px; line-height: 1.5; }
+body.wewe-modal-open { overflow: hidden; }
+.wewe-qr-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  place-items: center;
+  padding: 18px;
+  background: rgba(17,24,39,.64);
+  backdrop-filter: blur(3px);
+}
+.wewe-qr-backdrop.active { display: grid; }
+.wewe-qr-modal {
+  width: min(430px,100%);
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 18px;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 28px 90px rgba(0,0,0,.30);
+}
+.wewe-qr-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.wewe-qr-head h2 { margin: 4px 0 0; font-size: 20px; line-height: 1.35; }
+.wewe-qr-head button { width: 44px; padding: 0; font-size: 25px; }
+.wewe-qr-code {
+  display: grid;
+  place-items: center;
+  width: 246px;
+  height: 246px;
+  margin: 18px auto 12px;
+  padding: 10px;
+  border: 1px solid #dbe4e8;
+  border-radius: 12px;
+  background: #fff;
+}
+.wewe-qr-code svg { display: block; width: 220px; height: 220px; }
+.wewe-qr-loading { color: #667085; font-size: 14px; }
+.wewe-qr-status { color: #172033; font-size: 14px; font-weight: 700; line-height: 1.6; text-align: center; }
+.wewe-qr-countdown { min-height: 22px; margin-top: 4px; color: #087f7a; font-size: 13px; text-align: center; }
+.wewe-qr-note { margin-top: 10px; padding: 10px; border-radius: 8px; color: #76531a; background: #fff8e8; font-size: 12px; line-height: 1.65; }
+.wewe-qr-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
+.wewe-qr-actions a { display: inline-flex; align-items: center; justify-content: center; padding: 8px; border: 1px solid #172033; border-radius: 7px; color: #172033; font-size: 12px; text-align: center; }
+@media (max-width: 720px) {
+  .wewe-hero, .wewe-card-head { flex-direction: column; }
+  .wewe-hero-actions { width: 100%; justify-content: space-between; }
+  .wewe-card-head > button { width: 100%; }
+  .wewe-card-head.compact { flex-direction: row; align-items: flex-start; }
+  .wewe-subscribe-row, .wewe-image-search { grid-template-columns: 1fr; }
+  .wewe-subscribe-row button, .wewe-image-search button { width: 100%; }
+  .wewe-advanced-form { grid-template-columns: 1fr; }
+  .wewe-source-actions { padding-left: 0; }
+  .wewe-source-actions button { flex: 1 1 42%; }
+  .wewe-feed-links { display: flex; width: 100%; }
+  .wewe-feed-links a { flex: 1; justify-content: center; }
+  .wewe-image-grid { grid-template-columns: repeat(2,minmax(0,1fr)); }
+}
+@media (max-width: 480px) {
+  .wewe-hero { padding: 15px; }
+  #weweView h2 { font-size: 22px; }
+  .wewe-steps { gap: 5px; }
+  .wewe-steps li { flex-direction: column; gap: 4px; min-height: 66px; padding: 7px 3px; font-size: 11px; text-align: center; }
+  .wewe-card { padding: 13px; }
+  .wewe-card-head.compact { flex-direction: column; }
+  .wewe-filter-actions { max-width: none; width: 100%; }
+  .wewe-filter-actions select { min-width: 0; width: 100%; }
+  .wewe-article-item, .wewe-task-item { flex-wrap: wrap; }
+  .wewe-article-actions { width: 100%; }
+  .wewe-article-actions button, .wewe-article-actions a { flex: 1; justify-content: center; }
+  .wewe-task-metrics { width: 100%; text-align: left; }
+  .wewe-qr-modal { padding: 15px; }
+  .wewe-qr-actions { grid-template-columns: 1fr; }
+}

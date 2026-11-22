@@ -2,6 +2,7 @@ services:
   nginx:
     image: nginx:1.27-alpine
     container_name: document-parser-nginx
+    restart: unless-stopped
     ports:
       - "80:80"
       - "443:443"
@@ -14,6 +15,7 @@ services:
   app:
     build: .
     container_name: document-parser-app
+    restart: unless-stopped
     env_file:
       - .env
     expose:
@@ -22,12 +24,16 @@ services:
       - ./artifacts:/app/artifacts
       - ./data:/app/data
       - ./.env:/app/.env
+      # The container reaches only the host-local MySQL socket. No MySQL port
+      # is published and no other project's database or service is changed.
+      - /var/run/mysqld/mysqld.sock:/var/run/mysqld/mysqld.sock
     depends_on:
       - qdrant
 
   qdrant:
     image: qdrant/qdrant:v1.14.1
     container_name: document-parser-qdrant
+    restart: unless-stopped
     expose:
       - "6333"
     volumes:

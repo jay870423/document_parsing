@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import requests
+from requests.adapters import HTTPAdapter
 
 ALLOWED_SCHEMES = {"http", "https"}
 MAX_REDIRECTS = 3
@@ -30,6 +31,56 @@ IMAGE_SIGNATURES = (
 
 class FetchError(RuntimeError):
     """抓取失败（网络错误、SSRF 拦截、超限等）。"""
+
+
+class PinnedDNSAdapter(HTTPAdapter):
+    """Connect to one validated IP while retaining the origin hostname for HTTP/TLS."""
+
+    def __init__(self, pinned_ip: str):
+        address = ipaddress.ip_address(pinned_ip)
+        if _is_blocked_ip(address):
+            raise FetchError("cannot pin a non-public address")
+        self.pinned_ip = str(address)
+        super().__init__()
+
+    def _pin_pool(self, pool):
+        if getattr(pool, "_safe_fetcher_pinned_ip", None) == self.pinned_ip:
+            return pool
+        connection_factory = pool.ConnectionCls
+
+        def pinned_connection(*args, **kwargs):
+            connection = connection_factory(*args, **kwargs)
+            original_new_conn = connection._new_conn
+            original_dns_host = connection._dns_host
+
+            def connect_to_validated_ip():
+                connection._dns_host = self.pinned_ip
+                try:
+                    return original_new_conn()
+                finally:
+                    # urllib3's host property reads _dns_host. Restore it before
+                    # HTTP Host handling or HTTPS SNI/certificate verification.
+                    connection._dns_host = original_dns_host
+
+            connection._new_conn = connect_to_validated_ip
+            return connection
+
+        pool.ConnectionCls = pinned_connection
+        pool._safe_fetcher_pinned_ip = self.pinned_ip
+        return pool
+
+    def get_connection_with_tls_context(self, request, verify, proxies=None, cert=None):
+        if proxies:
+            raise FetchError("HTTP proxies are disabled for safe fetching")
+        pool = super().get_connection_with_tls_context(
+            request, verify, proxies={}, cert=cert
+        )
+        return self._pin_pool(pool)
+
+    def get_connection(self, url, proxies=None):
+        if proxies:
+            raise FetchError("HTTP proxies are disabled for safe fetching")
+        return self._pin_pool(super().get_connection(url, proxies={}))
 
 
 @dataclass
@@ -89,9 +140,8 @@ def resolve_public_ips(host: str, port: int = 80) -> list[str]:
     return ips
 
 
-def validate_url(url: str) -> tuple[str, int]:
-    """校验 URL 协议与目标主机，返回 (host, port)。"""
-
+def resolve_url_target(url: str) -> tuple[str, int, list[str]]:
+    """Validate a URL and return its host, port, and connectable public IPs."""
     parsed = urlparse((url or "").strip())
     if parsed.scheme.lower() not in ALLOWED_SCHEMES:
         raise FetchError("unsupported scheme: " + str(parsed.scheme))
@@ -99,16 +149,24 @@ def validate_url(url: str) -> tuple[str, int]:
     if not host:
         raise FetchError("missing host")
     try:
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except ValueError as exc:
+        raise FetchError("invalid target port") from exc
+    try:
         ip = ipaddress.ip_address(host)
     except ValueError:
         ip = None
     if ip is not None:
         if _is_blocked_ip(ip):
             raise FetchError("target address is not public")
-        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
-        return host, port
-    resolve_public_ips(host, parsed.port or (443 if parsed.scheme.lower() == "https" else 80))
-    return host, parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+        return host, port, [str(ip)]
+    return host, port, resolve_public_ips(host, port)
+
+
+def validate_url(url: str) -> tuple[str, int]:
+    """Validate URL protocol and public resolution, returning (host, port)."""
+    host, port, _ = resolve_url_target(url)
+    return host, port
 
 
 class SafeFetcher:
@@ -118,6 +176,45 @@ class SafeFetcher:
         self.timeout = max(1, int(timeout))
         self.max_bytes = max(1024, int(max_bytes))
         self.session = session or requests.Session()
+
+    @staticmethod
+    def _close_response(resp) -> None:
+        adapter = getattr(resp, "_safe_fetcher_adapter", None)
+        try:
+            resp.close()
+        finally:
+            if adapter is not None:
+                adapter.close()
+                setattr(resp, "_safe_fetcher_adapter", None)
+
+    def _request_once(self, url: str, headers: dict, timeout: int, pinned_ip: str):
+        if not isinstance(self.session, requests.Session):
+            # Deterministic test doubles do not perform real DNS or sockets.
+            return self.session.get(
+                url,
+                headers=headers,
+                timeout=timeout,
+                allow_redirects=False,
+                stream=True,
+            )
+        request = self.session.prepare_request(
+            requests.Request("GET", url, headers=headers)
+        )
+        adapter = PinnedDNSAdapter(pinned_ip)
+        try:
+            resp = adapter.send(
+                request,
+                stream=True,
+                timeout=timeout,
+                verify=True,
+                cert=None,
+                proxies={},
+            )
+        except Exception:
+            adapter.close()
+            raise
+        setattr(resp, "_safe_fetcher_adapter", adapter)
+        return resp
 
     def get(
         self,
@@ -129,14 +226,13 @@ class SafeFetcher:
         limit = max_bytes or self.max_bytes
         current = (url or "").strip()
         for _ in range(MAX_REDIRECTS + 1):
-            validate_url(current)
+            _, _, resolved_ips = resolve_url_target(current)
             try:
-                resp = self.session.get(
+                resp = self._request_once(
                     current,
                     headers=headers or {},
                     timeout=timeout or self.timeout,
-                    allow_redirects=False,
-                    stream=True,
+                    pinned_ip=resolved_ips[0],
                 )
             except FetchError:
                 raise
@@ -145,7 +241,7 @@ class SafeFetcher:
 
             if resp.is_redirect or resp.is_permanent_redirect:
                 location = resp.headers.get("Location") or ""
-                resp.close()
+                self._close_response(resp)
                 if not location:
                     raise FetchError("redirect without location")
                 from urllib.parse import urljoin
@@ -156,7 +252,7 @@ class SafeFetcher:
             content_type = (resp.headers.get("Content-Type") or "").lower()
             declared = resp.headers.get("Content-Length")
             if declared and declared.isdigit() and int(declared) > limit:
-                resp.close()
+                self._close_response(resp)
                 raise FetchError("response too large")
 
             buffer = bytearray()
@@ -168,14 +264,14 @@ class SafeFetcher:
                     if len(buffer) > limit:
                         raise FetchError("response too large")
             except FetchError:
-                resp.close()
+                self._close_response(resp)
                 raise
             except Exception as exc:
-                resp.close()
+                self._close_response(resp)
                 raise FetchError("read failed: " + str(exc)) from exc
 
             status_code = int(resp.status_code)
-            resp.close()
+            self._close_response(resp)
             if status_code >= 400:
                 raise FetchError("upstream returned status %d" % status_code)
             return FetchResult(
@@ -199,10 +295,10 @@ def sniff_image(data: bytes) -> tuple[str, str] | None:
     return None
 
 
-def download_image(fetcher: SafeFetcher, url: str) -> tuple[bytes, str, str]:
+def download_image(fetcher: SafeFetcher, url: str, max_bytes: int | None = None) -> tuple[bytes, str, str]:
     """下载并校验图片，返回 (数据, mime, 后缀)。"""
 
-    result = fetcher.get(url, headers={"Accept": "image/*"})
+    result = fetcher.get(url, headers={"Accept": "image/*"}, max_bytes=max_bytes)
     sniffed = sniff_image(result.content)
     if not sniffed:
         raise FetchError("not a supported image payload")

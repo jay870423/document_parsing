@@ -5,16 +5,20 @@
 -> 记录文章与图片资产 -> 任务状态回写。
 
 约束：
-- 所有向量写入前先按 article_id 删除旧点位，保证重复采集幂等；
+- 向量按唯一版本暂存，MySQL 发布当前版本后才对检索可见；
 - 图片描述失败不阻断正文入库，原生图片向量失败则降级为仅描述文本；
 - 单源文章数、单文图片数、图片字节数均受配置上限约束。
 """
 
 from __future__ import annotations
 
-import xml.etree.ElementTree as ET
+import logging
+import uuid
+import defusedxml.ElementTree as ET
+from defusedxml.common import DefusedXmlException
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urljoin
 
 from app.config import Settings
 from app.rag import split_text_with_metadata
@@ -22,10 +26,11 @@ from app.wewe_client import FeedItem, WeWeRssClient
 from app.wewe_fetcher import FetchError, SafeFetcher, download_image
 from app.wewe_images import ImageEmbeddingClient, WeWeVectorIndex
 from app.wewe_sanitize import sanitize_html, strip_tags
-from app.wewe_store import WeWeStore
+from app.wewe_store import CollectionLeaseLost, WeWeStore
 
 SOURCE_TYPE_MP = "mp"
 SOURCE_TYPE_WEB = "web"
+logger = logging.getLogger(__name__)
 
 
 class WeWeCollectError(RuntimeError):
@@ -48,7 +53,7 @@ def _parse_feed_xml(text: str, base_url: str) -> list[FeedItem]:
 
     try:
         root = ET.fromstring(text)
-    except ET.ParseError:
+    except (ET.ParseError, DefusedXmlException):
         return []
     items: list[FeedItem] = []
 
@@ -66,13 +71,19 @@ def _parse_feed_xml(text: str, base_url: str) -> list[FeedItem]:
         title = _text(node, "title", "{http://www.w3.org/2005/Atom}title")
         link = _text(node, "link", "{http://www.w3.org/2005/Atom}link")
         if not link:
-            link_node = node.find("{http://www.w3.org/2005/Atom}link")
+            atom_links = node.findall("{http://www.w3.org/2005/Atom}link")
+            alternate = next(
+                (item for item in atom_links if item.attrib.get("rel", "alternate") == "alternate"),
+                None,
+            )
+            link_node = alternate or next((item for item in atom_links if item.attrib.get("rel") != "self"), None)
             if link_node is not None:
                 link = link_node.attrib.get("href", "")
+        link = urljoin(base_url, link) if link else ""
         description = _text(
             node,
-            "description",
             "{http://purl.org/rss/1.0/modules/content/}encoded",
+            "description",
             "{http://www.w3.org/2005/Atom}content",
             "{http://www.w3.org/2005/Atom}summary",
         )
@@ -151,70 +162,102 @@ class WeWeIngestPipeline:
         target.mkdir(parents=True, exist_ok=True)
         return target
 
-    def _store_images(self, user_id: int, article_id: int, images: list[dict]) -> list[dict]:
+    def _store_images(
+        self, user_id: int, article_id: int, images: list[dict], task_id: int, vector_version: str
+    ) -> list[dict]:
         stored: list[dict] = []
         limit = max(0, int(self.settings.wewe_max_images_per_article))
         for image in images[:limit]:
+            self.store.assert_task_lease(task_id)
             url = str(image.get("url") or "")
             if not url or url.lower().startswith("data:"):
                 continue
+            image_id, existing = self.store.stage_image_identity(
+                article_id, user_id, url, vector_version, task_id
+            )
             try:
-                data, mime, suffix = download_image(self.fetcher, url)
+                data, mime, suffix = download_image(
+                    self.fetcher, url, max_bytes=self.settings.wewe_max_image_bytes
+                )
             except FetchError as exc:
-                self.store.upsert_image(
-                    article_id=article_id,
-                    user_id=user_id,
-                    url=url,
-                    status="failed",
-                    error=str(exc)[:300],
+                old_path = Path(str(existing.get("local_path") or ""))
+                reusable = (
+                    existing.get("status") not in {"staged", "stale"}
+                    and bool(existing.get("local_path"))
+                    and old_path.is_file()
+                )
+                if reusable:
+                    stored.append({
+                        "image_id": image_id,
+                        "url": url,
+                        "local_path": str(old_path),
+                        "mime_type": str(existing.get("mime_type") or ""),
+                        "byte_size": int(existing.get("byte_size") or old_path.stat().st_size),
+                        "description": str(existing.get("description") or ""),
+                        "alt": image.get("alt", ""),
+                        "vector_version": vector_version,
+                        "staged_file": False,
+                    })
+                else:
+                    stored.append({
+                        "image_id": image_id,
+                        "url": url,
+                        "local_path": "",
+                        "mime_type": "",
+                        "byte_size": 0,
+                        "description": "",
+                        "alt": image.get("alt", ""),
+                        "vector_version": vector_version,
+                        "status": "failed",
+                        "error": str(exc)[:500],
+                        "staged_file": False,
+                    })
+                logger.warning(
+                    "image fetch failed article=%s image=%s reused=%s error=%s",
+                    article_id, image_id, reusable, str(exc)[:200],
                 )
                 continue
             if len(data) > self.settings.wewe_max_image_bytes:
                 continue
-            image_id = self.store.upsert_image(
-                article_id=article_id,
-                user_id=user_id,
-                url=url,
-                mime_type=mime,
-                byte_size=len(data),
-                status="downloaded",
+            path = self._image_dir(user_id, article_id) / (
+                "img_%d_%s%s" % (image_id, vector_version, suffix)
             )
-            path = self._image_dir(user_id, article_id) / ("img_%d%s" % (image_id, suffix))
-            path.write_bytes(data)
-            self.store.upsert_image(
-                article_id=article_id,
-                user_id=user_id,
-                url=url,
-                local_path=str(path),
-                mime_type=mime,
-                byte_size=len(data),
-                status="downloaded",
-            )
-            stored.append(
-                {
-                    "image_id": image_id,
-                    "url": url,
-                    "local_path": str(path),
-                    "mime_type": mime,
-                    "alt": image.get("alt", ""),
-                }
-            )
+            try:
+                with self.store.task_write_guard(task_id):
+                    path.write_bytes(data)
+            except Exception:
+                path.unlink(missing_ok=True)
+                raise
+            stored.append({
+                "image_id": image_id,
+                "url": url,
+                "local_path": str(path),
+                "mime_type": mime,
+                "byte_size": len(data),
+                "description": "",
+                "alt": image.get("alt", ""),
+                "vector_version": vector_version,
+                "staged_file": True,
+            })
         return stored
 
-    def _describe_images(self, user_id: int, article_id: int, images: list[dict]) -> list[dict]:
+    def _describe_images(
+        self, user_id: int, article_id: int, images: list[dict], task_id: int
+    ) -> list[dict]:
         described: list[dict] = []
         prompt = self.settings.vision_prompt_template
         for image in images:
+            if image.get("status") == "failed":
+                described.append(dict(image))
+                continue
+            self.store.assert_task_lease(task_id)
             description = ""
             try:
                 description = self.vision.analyze_image(image_path=image["local_path"], prompt=prompt) or ""
             except Exception:
                 description = ""
             description = (description or "").strip()
-            if description:
-                self.store.update_image(image["image_id"], description=description, status="described")
-            else:
-                self.store.update_image(image["image_id"], status="described", error="vision failed")
+            image["description"] = description
             item = dict(image)
             item["description"] = description
             described.append(item)
@@ -228,18 +271,19 @@ class WeWeIngestPipeline:
         article: dict,
         text: str,
         images: list[dict],
+        task_id: int,
+        vector_version: str,
     ) -> dict:
         article_id = int(article["id"])
+        self.store.assert_task_lease(task_id)
         source = self.store.get_source(user_id, int(article["source_id"])) or {}
-        # 幂等：先清掉该文章的历史向量
-        self.vector_index.delete_article(user_id, article_id)
-
         metadata = {
             "source_type": "wewe_" + str(source.get("source_type") or "mp"),
             "source_filename": str(article.get("title") or article.get("upstream_article_id") or ""),
             "source_file": str(article.get("url") or ""),
             "source_manual": str(source.get("name") or ""),
             "article_id": article_id,
+            "vector_version": vector_version,
             "source_id": int(source.get("id") or 0),
             "article_title": str(article.get("title") or ""),
             "article_url": str(article.get("url") or ""),
@@ -251,19 +295,6 @@ class WeWeIngestPipeline:
 
         chunk_records = split_text_with_metadata(text, self.settings.chunk_size, self.settings.chunk_overlap)
         chunks = [str(item.get("text", "")) for item in chunk_records if str(item.get("text", "")).strip()]
-        text_points = 0
-        if chunks:
-            vectors = self.embedding.embed_texts(chunks)
-            text_points = self.vector_index.upsert_text_chunks(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
-                article_id=article_id,
-                chunks=chunks,
-                vectors=vectors,
-                metadata=metadata,
-            )
-
-        # 视觉描述文本进入文本空间（明确标记为描述文本，不是原生图片向量）
         desc_chunks = []
         desc_meta = []
         for image in images:
@@ -271,75 +302,106 @@ class WeWeIngestPipeline:
             if not description:
                 continue
             desc_chunks.append(description)
-            desc_meta.append(
-                {
-                    "source_type": metadata["source_type"],
-                    "source_filename": metadata["source_filename"],
-                    "source_file": metadata["source_file"],
-                    "source_manual": metadata["source_manual"],
-                    "article_id": article_id,
-                    "source_id": metadata["source_id"],
-                    "article_title": metadata["article_title"],
-                    "article_url": metadata["article_url"],
-                    "image_id": int(image["image_id"]),
-                    "image_url": str(image.get("url") or ""),
-                    "chunk_type": "image_description",
-                    "vector_space": "text",
-                }
-            )
-        if desc_chunks:
-            desc_vectors = self.embedding.embed_texts(desc_chunks)
-            for offset, meta in enumerate(desc_meta):
-                self.vector_index.upsert_text_chunks(
-                    user_id=user_id,
-                    knowledge_base_id=knowledge_base_id,
-                    article_id=article_id,
-                    chunks=[desc_chunks[offset]],
-                    vectors=[desc_vectors[offset]],
-                    metadata=meta,
-                    key_prefix="d" + str(offset),
-                )
+            desc_meta.append({
+                "source_type": metadata["source_type"],
+                "source_filename": metadata["source_filename"],
+                "source_file": metadata["source_file"],
+                "source_manual": metadata["source_manual"],
+                "article_id": article_id,
+                "vector_version": vector_version,
+                "source_id": metadata["source_id"],
+                "article_title": metadata["article_title"],
+                "article_url": metadata["article_url"],
+                "image_id": int(image["image_id"]),
+                "image_url": str(image.get("url") or ""),
+                "chunk_type": "image_description",
+                "vector_space": "text",
+            })
 
-        # 原生图片向量进入独立图片空间
-        image_points = 0
+        image_items = []
         if self.settings.wewe_image_vector_enabled and self.image_embedding is not None:
-            items = []
             for image in images:
+                if image.get("status") == "failed":
+                    continue
                 vector = self.image_embedding.embed_image_file(image["local_path"])
                 if not vector:
                     continue
-                items.append(
-                    {
-                        "image_id": image["image_id"],
-                        "vector": vector,
-                        "image_url": image.get("url", ""),
-                        "local_path": image.get("local_path", ""),
-                        "description": image.get("description", ""),
-                        "source_id": metadata["source_id"],
-                        "source_type": metadata["source_type"],
-                        "source_name": metadata["source_manual"],
-                        "source_filename": metadata["source_filename"],
-                        "source_file": metadata["source_file"],
-                        "article_title": metadata["article_title"],
-                        "article_url": metadata["article_url"],
-                    }
-                )
-            image_points = self.vector_index.upsert_image_vectors(
-                user_id=user_id,
-                knowledge_base_id=knowledge_base_id,
-                article_id=article_id,
-                items=items,
-            )
+                image_items.append({
+                    "article_id": article_id,
+                    "vector_version": vector_version,
+                    "image_id": image["image_id"],
+                    "vector": vector,
+                    "image_url": image.get("url", ""),
+                    "local_path": image.get("local_path", ""),
+                    "description": image.get("description", ""),
+                    "source_id": metadata["source_id"],
+                    "source_type": metadata["source_type"],
+                    "source_name": metadata["source_manual"],
+                    "source_filename": metadata["source_filename"],
+                    "source_file": metadata["source_file"],
+                    "article_title": metadata["article_title"],
+                    "article_url": metadata["article_url"],
+                })
 
-        self.store.update_article(
-            article_id,
-            status="indexed",
-            error="",
-            chunk_count=text_points + len(desc_chunks),
-            image_count=len(images),
-            indexed=True,
-        )
-        return {"text_points": text_points, "image_points": image_points, "chunks": len(chunks)}
+        # Compute every embedding before mutating either vector space. The new
+        # generation is invisible until update_article publishes its UUID in MySQL.
+        text_vectors = self.embedding.embed_texts(chunks) if chunks else []
+        desc_vectors = self.embedding.embed_texts(desc_chunks) if desc_chunks else []
+
+        text_points = 0
+        image_points = 0
+        try:
+            with self.store.task_write_guard(task_id):
+                if chunks:
+                    text_points = self.vector_index.upsert_text_chunks(
+                        user_id=user_id,
+                        knowledge_base_id=knowledge_base_id,
+                        article_id=article_id,
+                        chunks=chunks,
+                        vectors=text_vectors,
+                        metadata=metadata,
+                    )
+                for offset, meta in enumerate(desc_meta):
+                    self.vector_index.upsert_text_chunks(
+                        user_id=user_id,
+                        knowledge_base_id=knowledge_base_id,
+                        article_id=article_id,
+                        chunks=[desc_chunks[offset]],
+                        vectors=[desc_vectors[offset]],
+                        metadata=meta,
+                        key_prefix="d" + str(offset),
+                    )
+                if image_items:
+                    image_points = self.vector_index.upsert_image_vectors(
+                        user_id=user_id,
+                        knowledge_base_id=knowledge_base_id,
+                        article_id=article_id,
+                        items=image_items,
+                    )
+        except Exception:
+            try:
+                self.vector_index.delete_article_version(user_id, article_id, vector_version)
+            except Exception:
+                logger.warning("failed to clean staged vectors article=%s version=%s", article_id, vector_version)
+            raise
+        return {
+            "text_points": text_points,
+            "image_points": image_points,
+            "chunks": len(chunks),
+            "chunk_count": text_points + len(desc_chunks),
+            "image_count": sum(1 for image in images if image.get("status") != "failed"),
+            "vector_version": vector_version,
+        }
+
+    def _cleanup_staged_image_files(self, images: list[dict]) -> None:
+        """Remove only newly staged files; never unlink a reused published asset."""
+        for image in images:
+            if not image.get("staged_file"):
+                continue
+            try:
+                Path(str(image.get("local_path") or "")).unlink(missing_ok=True)
+            except OSError:
+                logger.warning("failed to remove staged image %s", image.get("local_path"))
 
     # -- 主流程 ----------------------------------------------------
     def collect_source(
@@ -350,55 +412,44 @@ class WeWeIngestPipeline:
         limit: int | None = None,
         refresh: bool = True,
         kind: str = "manual",
+        task_id: int | None = None,
     ) -> dict:
         source = self.store.get_source(user_id, source_id)
         if not source:
             raise WeWeCollectError("source not found")
         kb_id = int(knowledge_base_id or source.get("knowledge_base_id"))
-        max_articles = max(1, int(limit or self.settings.wewe_max_articles_per_source))
-        task_id = self.store.create_task(user_id, source_id, kind=kind)
+        configured_limit = max(1, int(self.settings.wewe_max_articles_per_source))
+        max_articles = min(max(1, int(limit or configured_limit)), configured_limit)
+        task_id = int(task_id or self.store.create_task(user_id, source_id, kind=kind))
 
         article_count = 0
         image_count = 0
         indexed_count = 0
         error = ""
         try:
+            self.store.assert_task_lease(task_id)
             if source.get("source_type") == SOURCE_TYPE_WEB:
                 items = self._fetch_web_items(source, max_articles)
             else:
+                feed_id = str(source.get("upstream_feed_id") or "")
+                if not self.store.owns_upstream_feed(user_id, feed_id):
+                    raise WeWeCollectError("upstream feed is not owned by this user")
                 items = self._fetch_mp_items(source, max_articles, refresh)
             for item in items[:max_articles]:
+                self.store.assert_task_lease(task_id)
                 article_count += 1
+                existing_article = self.store.find_article(user_id, source_id, item.article_id)
+                previous_vector_version = str((existing_article or {}).get("vector_version") or "") or None
+                vector_version = uuid.uuid4().hex
+                images: list[dict] = []
                 try:
                     cleaned = sanitize_html(item.content_html, base_url=item.url)
                     text = cleaned["text"]
-                    if not text:
-                        text = strip_tags(item.content_html)
                     if not text.strip():
                         raise WeWeCollectError("article has no extractable text content")
-                    article_id, _created = self.store.upsert_article(
-                        user_id=user_id,
-                        source_id=source_id,
-                        knowledge_base_id=kb_id,
-                        upstream_article_id=item.article_id,
-                        title=item.title,
-                        url=item.url,
-                        author=item.author,
-                        published_at=item.published_at,
-                        cover_url=item.image_url,
-                        content_html=cleaned["html"],
-                        text_content=text,
-                        status="fetched",
-                    )
-                    images = self._store_images(user_id, article_id, cleaned["images"])
-                    images = self._describe_images(user_id, article_id, images)
-                    image_count += len(images)
-                    article_row = self.store.get_article(user_id, article_id) or {}
-                    self._index_article(user_id, kb_id, article_row, text, images)
-                    indexed_count += 1
-                except Exception as exc:  # 单篇失败不影响整体
-                    error = str(exc)[:300]
-                    try:
+                    if existing_article:
+                        article_id = int(existing_article["id"])
+                    else:
                         article_id, _created = self.store.upsert_article(
                             user_id=user_id,
                             source_id=source_id,
@@ -406,19 +457,136 @@ class WeWeIngestPipeline:
                             upstream_article_id=item.article_id,
                             title=item.title,
                             url=item.url,
-                            status="failed",
-                            error=error,
+                            author=item.author,
+                            published_at=item.published_at,
+                            cover_url=item.image_url,
+                            content_html=cleaned["html"],
+                            text_content=text,
+                            status="fetched",
+                            task_id=task_id,
                         )
-                        self.store.update_article(article_id, status="failed", error=error)
+                    article_row = dict(existing_article or self.store.get_article(user_id, article_id) or {})
+                    article_row.update({
+                        "id": article_id,
+                        "source_id": source_id,
+                        "knowledge_base_id": kb_id,
+                        "upstream_article_id": item.article_id,
+                        "title": item.title,
+                        "url": item.url,
+                        "author": item.author,
+                        "published_at": item.published_at,
+                        "cover_url": item.image_url,
+                    })
+                    images = self._store_images(
+                        user_id, article_id, cleaned["images"], task_id, vector_version
+                    )
+                    images = self._describe_images(user_id, article_id, images, task_id)
+                    image_count += sum(1 for image in images if image.get("status") != "failed")
+                    index_result = self._index_article(
+                        user_id, kb_id, article_row, text, images, task_id, vector_version
+                    )
+                    # MySQL atomically selects the visible generation. Stale points
+                    # are removed only after this authoritative commit succeeds.
+                    try:
+                        published = self.store.update_article(
+                            article_id,
+                            status="indexed",
+                            error="",
+                            chunk_count=index_result["chunk_count"],
+                            image_count=index_result["image_count"],
+                            vector_version=index_result["vector_version"],
+                            indexed=True,
+                            text_content=text,
+                            content_html=cleaned["html"],
+                            title=item.title,
+                            url=item.url,
+                            author=item.author,
+                            published_at=item.published_at,
+                            cover_url=item.image_url,
+                            knowledge_base_id=kb_id,
+                            images=images,
+                            task_id=task_id,
+                        )
+                        if not published:
+                            raise WeWeCollectError("article publication failed")
                     except Exception:
-                        pass
-            self.store.update_source(user_id, source_id, last_sync_at=_now(), last_error=error, status="active")
+                        try:
+                            self.vector_index.delete_article_version(
+                                user_id, article_id, index_result["vector_version"]
+                            )
+                        except Exception:
+                            logger.warning("failed to clean unpublished vectors article=%s", article_id)
+                        raise
+                    if previous_vector_version and previous_vector_version != vector_version:
+                        try:
+                            # Exact old UUID is race-free even if a newer worker has published since.
+                            self.vector_index.delete_article_version(
+                                user_id, article_id, previous_vector_version
+                            )
+                        except Exception:
+                            logger.warning("failed to clean replaced vectors article=%s", article_id)
+                    indexed_count += 1
+                except CollectionLeaseLost:
+                    self._cleanup_staged_image_files(images)
+                    raise
+                except Exception as exc:  # 单篇失败不影响整体，失租除外
+                    self._cleanup_staged_image_files(images)
+                    error = str(exc)[:300]
+                    try:
+                        current = self.store.find_article(user_id, source_id, item.article_id)
+                        if existing_article:
+                            # Keep the last published version and only report the refresh error.
+                            self.store.update_article(
+                                int(existing_article["id"]), error=error, task_id=task_id
+                            )
+                        elif current:
+                            self.store.update_article(
+                                int(current["id"]), status="failed", error=error, task_id=task_id
+                            )
+                        else:
+                            article_id, _created = self.store.upsert_article(
+                                user_id=user_id,
+                                source_id=source_id,
+                                knowledge_base_id=kb_id,
+                                upstream_article_id=item.article_id,
+                                title=item.title,
+                                url=item.url,
+                                author=item.author,
+                                published_at=item.published_at,
+                                cover_url=item.image_url,
+                                status="failed",
+                                error=error,
+                                task_id=task_id,
+                            )
+                    except CollectionLeaseLost:
+                        raise
+                    except Exception:
+                        logger.exception("failed to persist article collection error article=%s", item.article_id)
+            self.store.update_source(
+                user_id,
+                source_id,
+                task_id=task_id,
+                last_sync_at=_now(),
+                last_error=error,
+                status="active",
+            )
+        except CollectionLeaseLost as exc:
+            error = str(exc)[:300]
         except Exception as exc:
             error = str(exc)[:300]
-            self.store.update_source(user_id, source_id, last_error=error, status="error")
+            try:
+                self.store.update_source(
+                    user_id,
+                    source_id,
+                    task_id=task_id,
+                    last_error=error,
+                    status="error",
+                )
+            except CollectionLeaseLost as lease_exc:
+                error = str(lease_exc)[:300]
 
         status = "failed" if error and indexed_count == 0 else ("partial" if error else "success")
-        self.store.finish_task(
+        finished = self.store.finish_task(
             task_id,
             status=status,
             article_count=article_count,
@@ -426,6 +594,9 @@ class WeWeIngestPipeline:
             indexed_count=indexed_count,
             error=error,
         )
+        if not finished:
+            status = "failed"
+            error = error or "collection task lease was lost before finalization"
         return {
             "task_id": task_id,
             "status": status,

@@ -31,6 +31,24 @@ def test_sanitize_removes_scripts_and_event_handlers():
     assert "正常正文" in result["text"]
 
 
+@pytest.mark.parametrize(
+    ("html", "kept"),
+    [
+        ('<p>前文</p><script>const template = "<p>脚本内内容</p>"; alert(1);', "前文"),
+        ("<script>alert(1)", ""),
+        ("<style>body{display:none}", ""),
+    ],
+)
+def test_unclosed_drop_elements_fail_closed(html, kept):
+    result = sanitize_html(html)
+    plain = strip_tags(html)
+    assert result["text"] == kept
+    assert plain == kept
+    assert "脚本内内容" not in result["text"]
+    assert "alert" not in result["text"] + plain
+    assert "display:none" not in result["text"] + plain
+
+
 def test_sanitize_drops_javascript_urls():
     html = '<a href="javascript:alert(1)">点我</a><a href="https://example.com/a">正常</a>'
     result = sanitize_html(html)
@@ -236,4 +254,49 @@ def test_client_surfaces_upstream_error():
     client = WeWeRssClient("http://upstream:4000", session=session, max_retries=1)
     with pytest.raises(WeWeError):
         client.list_feeds()
+
+
+def trpc_payload(value):
+    return FakeResponse({"result": {"data": {"json": value}}})
+
+
+def test_client_qr_login_and_account_contract_never_returns_token():
+    session = FakeSession({
+        "/trpc/platform.createLoginUrl": trpc_payload({"uuid": "login-1", "scanUrl": "https://weread.example/scan?id=1"}),
+        "/trpc/platform.getLoginResult": trpc_payload({"vid": 123, "username": "读者", "token": "very-secret-token"}),
+        "/trpc/account.add": trpc_payload({"id": "123", "name": "读者", "status": 1, "token": "very-secret-token"}),
+        "/trpc/account.list": trpc_payload({"items": [{"id": "123", "name": "读者", "status": 1, "updatedAt": "2026-11-21"}], "blocks": []}),
+    })
+    client = WeWeRssClient("http://upstream:4000", session=session)
+
+    login = client.create_login_url()
+    assert login == {"login_id": "login-1", "scan_url": "https://weread.example/scan?id=1"}
+    result = client.get_login_result("login-1")
+    account = client.add_account(result)
+    assert account == {"id": "123", "name": "读者", "status": 1}
+    assert client.list_accounts()[0]["blocked"] is False
+    assert "very-secret-token" not in str(account)
+    add_request = next(kwargs for url, kwargs in session.requests if url.endswith("/trpc/account.add"))
+    assert add_request["json"]["json"]["token"] == "very-secret-token"
+
+
+def test_client_subscribes_mp_from_share_link_contract():
+    mp = {"id": "MP_WXS_1", "name": "公众号", "cover": "https://img/cover.png", "intro": "简介", "updateTime": 123}
+    session = FakeSession({
+        "/trpc/platform.getMpInfo": trpc_payload([mp]),
+        "/trpc/feed.add": trpc_payload({"id": "MP_WXS_1", "mpName": "公众号"}),
+    })
+    client = WeWeRssClient("http://upstream:4000", session=session)
+
+    info = client.get_mp_info("https://mp.weixin.qq.com/s/article-token")
+    added = client.add_feed(info)
+    assert added["upstream_feed_id"] == "MP_WXS_1"
+    assert added["name"] == "公众号"
+    feed_request = next(kwargs for url, kwargs in session.requests if url.endswith("/trpc/feed.add"))
+    assert feed_request["json"]["json"] == {
+        "id": "MP_WXS_1", "mpName": "公众号", "mpCover": "https://img/cover.png",
+        "mpIntro": "简介", "updateTime": 123, "status": 1,
+    }
+    with pytest.raises(WeWeError):
+        client.get_mp_info("https://example.com/not-wechat")
 

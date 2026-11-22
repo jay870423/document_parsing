@@ -20,6 +20,19 @@ from qdrant_client import QdrantClient
 from qdrant_client.models import Distance, FieldCondition, Filter, MatchValue, PointStruct, VectorParams
 
 from app.config import Settings
+from app.vector_versions import with_published_article_versions
+
+
+def public_image_hit(hit: dict) -> dict:
+    """Return an API-safe image hit with an authorized, stable file URL."""
+    item = dict(hit)
+    item.pop("local_path", None)
+    try:
+        image_id = int(item.get("image_id") or 0)
+    except (TypeError, ValueError):
+        image_id = 0
+    item["image_file_url"] = f"/api/wewe/images/{image_id}/file" if image_id > 0 else None
+    return item
 
 
 def _raise_for_status_with_details(resp: requests.Response) -> None:
@@ -122,17 +135,30 @@ class WeWeVectorIndex:
         return self._ensure_collection(self.image_collection, self.image_vector_size)
 
     @staticmethod
-    def _point_id(space: str, user_id: int, article_id: int, key: str) -> str:
-        return str(uuid.uuid5(uuid.NAMESPACE_URL, "wewe:%s:%s:%s:%s" % (space, user_id, article_id, key)))
+    def _point_id(
+        space: str, user_id: int, article_id: int, key: str,
+        vector_version: str | None = None,
+    ) -> str:
+        identity = "wewe:%s:%s:%s:%s" % (space, user_id, article_id, key)
+        if vector_version:
+            identity = "wewe:%s:%s:%s:%s:%s" % (
+                space, user_id, article_id, vector_version, key,
+            )
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
 
     @staticmethod
-    def _filter(user_id: int, knowledge_base_id: int | None = None, article_id: int | None = None) -> Filter:
+    def _filter(
+        user_id: int,
+        knowledge_base_id: int | None = None,
+        article_id: int | None = None,
+        article_versions: dict[int, str | None] | None = None,
+    ) -> Filter:
         conditions = [FieldCondition(key="owner_user_id", match=MatchValue(value=int(user_id)))]
         if knowledge_base_id is not None:
             conditions.append(FieldCondition(key="knowledge_base_id", match=MatchValue(value=int(knowledge_base_id))))
         if article_id is not None:
             conditions.append(FieldCondition(key="article_id", match=MatchValue(value=int(article_id))))
-        return Filter(must=conditions)
+        return with_published_article_versions(Filter(must=conditions), article_versions)
 
     # -- writes ----------------------------------------------------
     def upsert_text_chunks(
@@ -148,6 +174,7 @@ class WeWeVectorIndex:
         if not chunks or not vectors:
             return 0
         self.ensure_text_collection()
+        vector_version = str(metadata.get("vector_version") or "") or None
         points: list[PointStruct] = []
         for index, (chunk, vector) in enumerate(zip(chunks, vectors)):
             payload = dict(metadata)
@@ -163,7 +190,9 @@ class WeWeVectorIndex:
             )
             points.append(
                 PointStruct(
-                    id=self._point_id("text", user_id, article_id, key_prefix + str(index)),
+                    id=self._point_id(
+                        "text", user_id, article_id, key_prefix + str(index), vector_version,
+                    ),
                     vector=vector,
                     payload=payload,
                 )
@@ -187,6 +216,7 @@ class WeWeVectorIndex:
         points: list[PointStruct] = []
         for item in usable:
             image_id = int(item["image_id"])
+            vector_version = str(item.get("vector_version") or "") or None
             payload = {
                 "owner_user_id": int(user_id),
                 "knowledge_base_id": int(knowledge_base_id),
@@ -207,9 +237,13 @@ class WeWeVectorIndex:
                 "article_url": str(item.get("article_url") or ""),
                 "chunk_index": 0,
             }
+            if vector_version:
+                payload["vector_version"] = vector_version
             points.append(
                 PointStruct(
-                    id=self._point_id("image", user_id, article_id, str(image_id)),
+                    id=self._point_id(
+                        "image", user_id, article_id, str(image_id), vector_version,
+                    ),
                     vector=list(item["vector"]),
                     payload=payload,
                 )
@@ -218,6 +252,45 @@ class WeWeVectorIndex:
         return len(points)
 
     # -- deletes ---------------------------------------------------
+    def _delete_where(self, query_filter: Filter) -> dict:
+        removed = {"text": 0, "image": 0}
+        existing = [c.name for c in self.client.get_collections().collections]
+        for space, collection in (("text", self.text_collection), ("image", self.image_collection)):
+            if collection not in existing:
+                continue
+            self.client.delete(
+                collection_name=collection, points_selector=query_filter, wait=True,
+            )
+            removed[space] = 1
+        return removed
+
+    def delete_article_version(self, user_id: int, article_id: int, vector_version: str) -> dict:
+        """Best-effort cleanup of an unpublished staging generation."""
+        if not vector_version:
+            return {"text": 0, "image": 0}
+        base = self._filter(user_id, article_id=article_id)
+        query_filter = Filter(
+            must=list(base.must or []) + [
+                FieldCondition(key="vector_version", match=MatchValue(value=vector_version))
+            ]
+        )
+        return self._delete_where(query_filter)
+
+    def delete_stale_article_versions(
+        self, user_id: int, article_id: int, current_version: str
+    ) -> dict:
+        """Delete old generations only after MySQL has published current_version."""
+        if not current_version:
+            raise ValueError("current vector version is required")
+        base = self._filter(user_id, article_id=article_id)
+        query_filter = Filter(
+            must=list(base.must or []),
+            must_not=[FieldCondition(
+                key="vector_version", match=MatchValue(value=current_version)
+            )],
+        )
+        return self._delete_where(query_filter)
+
     def delete_article(self, user_id: int, article_id: int) -> dict:
         """删除文章在两个向量空间中的全部点位（幂等）。"""
 
@@ -259,6 +332,7 @@ class WeWeVectorIndex:
         user_id: int,
         knowledge_base_id: int | None = None,
         top_k: int = 5,
+        article_versions: dict[int, str | None] | None = None,
     ) -> list[dict]:
         existing = [c.name for c in self.client.get_collections().collections]
         if self.image_collection not in existing:
@@ -268,7 +342,9 @@ class WeWeVectorIndex:
             query_vector=query_vector,
             limit=max(1, min(int(top_k), 30)),
             with_payload=True,
-            query_filter=self._filter(user_id, knowledge_base_id),
+            query_filter=self._filter(
+                user_id, knowledge_base_id, article_versions=article_versions
+            ),
         )
         hits: list[dict] = []
         for item in results:

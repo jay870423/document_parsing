@@ -34,7 +34,11 @@
 | 订阅源列表 | GET {base}/feeds/ |
 | 文章列表（含全文） | GET {base}/feeds/{feedId}.json?limit=&page=&mode=fulltext |
 | 触发上游刷新 | 同上加 &update=true |
-| 文章/来源只读管理 | POST {base}/trpc/article.list、POST {base}/trpc/feed.list |
+| 文章/来源只读管理 | GET {base}/trpc/article.list、GET {base}/trpc/feed.list（input 为 JSON 查询参数） |
+
+tRPC v10 的 query 必须使用 GET，并将 `{"json": input}` JSON 编码到 `input` 查询参数；
+mutation 使用 POST，请求体为同样的 JSON envelope。响应均为
+`{"result":{"data":{"json": ...}}}`。
 
 鉴权：Authorization 头携带 WEWE_AUTH_CODE（上游 authService.resolveAuth 直接读取该请求头）。
 授权码只来自环境变量，不入库、不写日志。

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+import json
 
 from app.wewe_client import WeWeRssClient, WeWeError
 from app.wewe_fetcher import (
@@ -199,7 +200,7 @@ class FakeSession:
         self.requests: list[tuple[str, dict]] = []
 
     def request(self, method, url, params=None, json=None, headers=None, timeout=None):
-        self.requests.append((url, {"params": params, "json": json, "headers": headers}))
+        self.requests.append((url, {"method": method, "params": params, "json": json, "headers": headers}))
         for key, value in self.responses.items():
             if url.endswith(key):
                 return value
@@ -258,6 +259,31 @@ def test_client_surfaces_upstream_error():
 
 def trpc_payload(value):
     return FakeResponse({"result": {"data": {"json": value}}})
+
+
+def test_trpc_queries_use_get_and_mutations_use_post():
+    session = FakeSession({
+        "/trpc/account.list": trpc_payload({"items": [], "blocks": []}),
+        "/trpc/article.list": trpc_payload({"items": []}),
+        "/trpc/platform.getLoginResult": trpc_payload({"message": "等待扫码"}),
+        "/trpc/platform.createLoginUrl": trpc_payload({"uuid": "login-1", "scanUrl": "https://weread.example/scan?id=1"}),
+    })
+    client = WeWeRssClient("http://upstream:4000", session=session)
+    client.list_accounts()
+    client.list_articles("feed-1", limit=7)
+    client.get_login_result("login-1")
+    client.create_login_url()
+
+    requests = {url.rsplit("/", 1)[-1]: kwargs for url, kwargs in session.requests}
+    for procedure in ("account.list", "article.list", "platform.getLoginResult"):
+        request = requests[procedure]
+        assert request["method"] == "GET"
+        assert json.loads(request["params"]["input"])["json"] is not None
+        assert request["json"] is None
+    assert json.loads(requests["article.list"]["params"]["input"])["json"] == {"limit": 7, "feedId": "feed-1"}
+    mutation = requests["platform.createLoginUrl"]
+    assert mutation["method"] == "POST"
+    assert mutation["json"] == {"json": {}}
 
 
 def test_client_qr_login_and_account_contract_never_returns_token():

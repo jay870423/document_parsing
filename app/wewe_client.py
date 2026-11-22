@@ -187,11 +187,21 @@ class WeWeRssClient:
         payload: dict | None = None,
         timeout: int | None = None,
         retry: bool = True,
+        query: bool = False,
     ) -> object:
-        data = self._request(
-            "POST", "/trpc/%s" % procedure.lstrip("/"), json_body={"json": payload or {}},
-            timeout=timeout, retry=retry,
-        )
+        # tRPC v10 rejects POST for query procedures. Queries carry the same
+        # {"json": input} envelope in the URL's JSON-encoded `input` parameter.
+        if query:
+            data = self._request(
+                "GET", "/trpc/%s" % procedure.lstrip("/"),
+                params={"input": json.dumps({"json": payload or {}}, ensure_ascii=False, separators=(",", ":"))},
+                timeout=timeout, retry=retry,
+            )
+        else:
+            data = self._request(
+                "POST", "/trpc/%s" % procedure.lstrip("/"), json_body={"json": payload or {}},
+                timeout=timeout, retry=retry,
+            )
         if not isinstance(data, dict):
             raise WeWeError("unexpected trpc payload")
         if "error" in data and data.get("error"):
@@ -210,7 +220,7 @@ class WeWeRssClient:
         payload: dict = {"limit": max(1, min(int(limit), 1000))}
         if feed_id:
             payload["feedId"] = feed_id
-        data = self.trpc("article.list", payload)
+        data = self.trpc("article.list", payload, query=True)
         items = data.get("items") if isinstance(data, dict) else None
         return items if isinstance(items, list) else []
 
@@ -230,7 +240,7 @@ class WeWeRssClient:
         if not target or len(target) > 256:
             raise WeWeError("valid login id is required")
         # 上游该接口会长轮询等待扫码；不做重试，避免一次扫码产生多个长请求。
-        data = self.trpc("platform.getLoginResult", {"id": target}, timeout=125, retry=False)
+        data = self.trpc("platform.getLoginResult", {"id": target}, timeout=125, retry=False, query=True)
         if not isinstance(data, dict):
             raise WeWeError("unexpected login result payload")
         return data
@@ -255,7 +265,7 @@ class WeWeRssClient:
         }
 
     def list_accounts(self) -> list[dict]:
-        data = self.trpc("account.list", {"limit": 1000})
+        data = self.trpc("account.list", {"limit": 1000}, query=True)
         if not isinstance(data, dict):
             raise WeWeError("unexpected account list payload")
         blocked = {str(item) for item in (data.get("blocks") or [])}

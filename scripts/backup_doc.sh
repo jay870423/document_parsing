@@ -7,6 +7,11 @@ BACKUP_ROOT="${DOC_BACKUP_ROOT:-/home/ubuntu/document_parsing-backups}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 DEST="$BACKUP_ROOT/$STAMP"
 
+if [[ ! -d "$ROOT/app" || ! -f "$ROOT/data/app.db" ]]; then
+  printf 'missing production source: %s (required app/ and data/app.db)\n' "$ROOT" >&2
+  exit 2
+fi
+
 install -d -m 700 "$BACKUP_ROOT"
 install -d -m 700 "$DEST"
 

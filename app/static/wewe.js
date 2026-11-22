@@ -380,8 +380,8 @@
     }
   }
 
-  async function loadWeweTasks() {
-    const generation = state.generation;
+  async function loadWeweTasks(generation = state.generation) {
+    if (generation !== state.generation || weweDisabled()) return;
     const data = await api("/api/wewe/tasks?limit=100");
     if (generation !== state.generation || weweDisabled()) return;
     state.tasks = data.tasks || [];
@@ -430,13 +430,16 @@
     return state.loadAllPromise;
   }
 
-  async function startCollection(sourceId) {
+  async function startCollection(sourceId, generation = state.generation) {
+    if (generation !== state.generation || weweDisabled()) return;
     const result = await api("/api/wewe/sources/" + Number(sourceId) + "/collect", {
       method: "POST",
       body: JSON.stringify({ refresh: true }),
     });
+    if (generation !== state.generation || weweDisabled()) return;
     watchWeweTask(result.task_id);
-    await loadWeweTasks();
+    await loadWeweTasks(generation);
+    if (generation !== state.generation || weweDisabled()) return;
     showNotice("采集任务 #" + result.task_id + " 已开始，可继续使用其他功能");
   }
 
@@ -663,7 +666,7 @@
       $("weweName").value = "";
       await loadWeweSources();
       if (generation !== state.generation || weweDisabled()) return;
-      await startCollection(created.source_id);
+      await startCollection(created.source_id, generation);
     } finally {
       updateFeatureAvailability();
     }

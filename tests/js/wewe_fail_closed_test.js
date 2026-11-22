@@ -37,6 +37,7 @@ function boot(statusResponder, taskResponder, operationResponder) {
   const elements = new Map();
   const calls = [];
   const errors = [];
+  const notices = [];
   const timers = [];
   function $(id) {
     if (!elements.has(id)) {
@@ -101,13 +102,13 @@ function boot(statusResponder, taskResponder, operationResponder) {
     },
     messageFrom(error) { return error && error.message ? error.message : String(error); },
     showError(error) { errors.push(error); },
-    showNotice() {},
+    showNotice(message) { notices.push(String(message)); },
     escapeHtml(value) { return String(value); },
     formatCNDate(value) { return String(value); },
   };
   vm.createContext(context);
   vm.runInContext(source, context, { filename: "wewe.js" });
-  return { window, $, calls, errors, timers };
+  return { window, $, calls, errors, notices, timers };
 }
 
 const tests = [];
@@ -210,18 +211,22 @@ test("disabled generation rejects an already in-flight task poll", async () => {
   assert.equal(timers.length, timerCount, "stale poll must not schedule another request");
 });
 
-test("disabled generation rejects in-flight image search and source creation", async () => {
-  for (const operation of ["search", "add"]) {
+test("disabled generation rejects in-flight image search, source creation, and collection", async () => {
+  for (const operation of ["search", "add", "collect"]) {
     let enabled = true;
     let resolveOperation;
     const pending = new Promise((resolve) => { resolveOperation = resolve; });
-    const { window, $ } = boot(
+    const { window, $, calls, notices } = boot(
       () => ({ enabled, upstream_configured: false, upstream_ok: false, upstream_feed_count: 0 }),
       null,
       (path, options) => {
         if (operation === "search" && path === "/api/wewe/images/search") return pending;
-        if (operation === "add" && path === "/api/wewe/sources" && options && options.method === "POST") return pending;
-        if (path === "/api/wewe/sources/8/collect") return { task_id: 9 };
+        if (path === "/api/wewe/sources" && options && options.method === "POST") {
+          return operation === "add" ? pending : { source_id: 8 };
+        }
+        if (path === "/api/wewe/sources/8/collect") {
+          return operation === "collect" ? pending : { task_id: 9 };
+        }
         return undefined;
       },
     );
@@ -236,18 +241,25 @@ test("disabled generation rejects in-flight image search and source creation", a
       $("weweName").value = "不得由旧请求清空";
       pendingAction = $("weweAddBtn").onclick();
     }
-    await Promise.resolve();
+    for (let index = 0; index < 20; index += 1) {
+      if (operation !== "collect" || calls.includes("/api/wewe/sources/8/collect")) break;
+      await Promise.resolve();
+    }
+    if (operation === "collect") assert.equal(calls.includes("/api/wewe/sources/8/collect"), true);
     enabled = false;
     await window.loadWeweAll();
     const disabledResults = $("weweImageResults").innerHTML;
+    const taskRequestCount = calls.filter((path) => path === "/api/wewe/tasks?limit=100").length;
     resolveOperation(operation === "search" ? {
       hits: [{ image_file_url: "/api/wewe/images/1/file", description: "旧结果" }],
-    } : { source_id: 8 });
+    } : operation === "add" ? { source_id: 8 } : { task_id: 9 });
     await pendingAction;
 
     assert.equal($("weweImageResults").innerHTML, disabledResults, operation);
     assert.equal($("weweImageSearchBtn").disabled, true, operation);
     assert.equal($("weweAddBtn").disabled, true, operation);
+    assert.equal(calls.filter((path) => path === "/api/wewe/tasks?limit=100").length, taskRequestCount, operation);
+    assert.equal(notices.some((message) => message.includes("采集任务 #9 已开始")), false, operation);
     if (operation === "add") assert.equal($("weweName").value, "不得由旧请求清空");
   }
 });

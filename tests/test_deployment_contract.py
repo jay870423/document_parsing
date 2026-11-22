@@ -1,3 +1,5 @@
+import os
+import subprocess
 from pathlib import Path
 
 
@@ -41,3 +43,18 @@ def test_release_scripts_backup_consistently_and_verify_both_sites():
     assert "/openapi.json" in verify
     assert "docker compose down" not in verify
     assert (ROOT / "deploy" / "mysql" / "README.md").is_file()
+
+
+def test_backup_rejects_missing_source_instead_of_creating_empty_bundle(tmp_path):
+    backup_root = tmp_path / "backups"
+    env = dict(os.environ, DOC_BACKUP_ROOT=str(backup_root))
+    result = subprocess.run(
+        [str(ROOT / "scripts" / "backup_doc.sh"), str(tmp_path / "missing")],
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=20,
+    )
+    assert result.returncode != 0
+    assert "missing production source" in result.stderr
+    assert not list(backup_root.rglob("manifest.txt")) if backup_root.exists() else True

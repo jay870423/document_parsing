@@ -55,7 +55,9 @@ conn = raw_connection(settings)
 try:
     with conn.cursor() as cur:
         cur.execute("SELECT 1")
-        assert cur.fetchone()[0] == 1
+        row = cur.fetchone()
+        value = next(iter(row.values())) if isinstance(row, dict) else row[0]
+        assert int(value) == 1
 finally:
     conn.close()
 response = requests.get("http://qdrant:6333/healthz", timeout=10)

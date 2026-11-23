@@ -58,8 +58,10 @@ wewe_pipeline: WeWeIngestPipeline = WeWeIngestPipeline(
     vision=pipeline.vision,
     image_embedding=wewe_image_embedding,
 )
-wewe_scheduler: WeWeScheduler = WeWeScheduler(settings, wewe_store, wewe_pipeline)
-wewe_collection_runner: WeWeCollectionRunner = WeWeCollectionRunner(wewe_store, wewe_pipeline)
+wewe_scheduler: WeWeScheduler = WeWeScheduler(settings, wewe_store, wewe_pipeline, billing_store=billing_store)
+wewe_collection_runner: WeWeCollectionRunner = WeWeCollectionRunner(
+    wewe_store, wewe_pipeline, billing_store=billing_store
+)
 
 AGREEMENT_TERMS_VERSION = "terms-v2026.06.29"
 AGREEMENT_PRIVACY_VERSION = "privacy-v2026.06.29"
@@ -615,6 +617,7 @@ app.include_router(
         resolve_kb=_resolve_user_knowledge_base,
         collection_runner=wewe_collection_runner,
         current_image_user=current_wewe_image_user,
+        billing_store=billing_store,
     )
 )
 

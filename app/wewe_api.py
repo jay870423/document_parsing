@@ -6,12 +6,15 @@
 
 from __future__ import annotations
 
+import logging
+import time
 from pathlib import Path
 from typing import Callable
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
+from app.billing import BillingStore, CallReservation, UserContext
 from app.config import Settings
 from app.wewe_client import WeWeRssClient
 from app.wewe_feed import render_atom, render_json_feed, render_opml, render_rss
@@ -19,7 +22,7 @@ from app.wewe_fetcher import sniff_image
 from app.wewe_images import WeWeVectorIndex, public_image_hit
 from app.wewe_onboarding import LoginSessionRegistry, login_qr_svg
 from app.wewe_pipeline import WeWeCollectError, WeWeIngestPipeline
-from app.wewe_runner import WeWeCollectionRunner
+from app.wewe_runner import WeWeCollectionRunner, settle_wewe_call
 from app.wewe_store import CollectionAlreadyRunning, WeWeStore
 
 
@@ -67,14 +70,56 @@ def build_wewe_router(
     resolve_kb: Callable,
     collection_runner: WeWeCollectionRunner | None = None,
     current_image_user: Callable | None = None,
+    billing_store: BillingStore | None = None,
 ) -> APIRouter:
     router = APIRouter(prefix="/api/wewe", tags=["wewe-rss"])
-    runner = collection_runner or WeWeCollectionRunner(store, pipeline)
+    billing = billing_store or BillingStore(settings)
+    runner = collection_runner or WeWeCollectionRunner(store, pipeline, billing_store=billing)
     login_sessions = LoginSessionRegistry()
+    logger = logging.getLogger(__name__)
 
     def _ensure_enabled() -> None:
         if not settings.wewe_enabled:
             raise HTTPException(status_code=503, detail="wewe-rss integration is disabled")
+
+    def _plan_entitlement(user: UserContext) -> dict:
+        if user.is_admin:
+            return {
+                "active": True, "can_collect": True, "plan_code": "admin",
+                "plan_name": "超管不限量", "call_quota": None, "remaining_calls": None,
+                "shared_quota": True, "quota_scope": "documents_and_collection",
+            }
+        subscription = billing.get_active_subscription(user.id)
+        remaining = int(subscription["remaining_calls"]) if subscription else 0
+        return {
+            "active": subscription is not None,
+            "can_collect": subscription is not None and remaining > 0,
+            "plan_code": str(subscription["plan_code"]) if subscription else "",
+            "plan_name": str(subscription["plan_name"]) if subscription else "",
+            "call_quota": int(subscription["call_quota"]) if subscription else 0,
+            "remaining_calls": remaining,
+            "shared_quota": True,
+            "quota_scope": "documents_and_collection",
+        }
+
+    def _ensure_plan(user: UserContext, *, require_quota: bool = False) -> None:
+        if user.is_admin:
+            return
+        try:
+            if require_quota:
+                billing.ensure_quota(user.id)
+            elif not billing.get_active_subscription(user.id):
+                raise PermissionError("暂无有效订阅，请先开通套餐")
+        except PermissionError as exc:
+            raise HTTPException(status_code=402, detail=str(exc)) from exc
+
+    def _reserve(user: UserContext) -> CallReservation | None:
+        if user.is_admin:
+            return None
+        try:
+            return billing.reserve_call(user.id)
+        except PermissionError as exc:
+            raise HTTPException(status_code=402, detail=str(exc)) from exc
 
     @router.get("/status")
     def status(user=Depends(current_user)) -> dict:
@@ -97,6 +142,7 @@ def build_wewe_router(
             "image_vector_enabled": bool(settings.wewe_image_vector_enabled),
             "image_collection": settings.wewe_image_collection,
             "scheduled_collect": bool(settings.wewe_collect_enabled),
+            "plan_entitlement": _plan_entitlement(user),
             "user_id": user.id,
         }
 
@@ -128,6 +174,7 @@ def build_wewe_router(
     @router.post("/accounts/login-sessions")
     def create_login_session(user=Depends(current_user)) -> dict:
         _ensure_enabled()
+        _ensure_plan(user)
         try:
             login = client.create_login_url()
             expires_in = login_sessions.put(login["login_id"], user.id)
@@ -149,6 +196,7 @@ def build_wewe_router(
             login_sessions.check(login_id, user.id)
         except KeyError as exc:
             raise HTTPException(status_code=404, detail="二维码会话不存在或已过期，请重新生成") from exc
+        _ensure_plan(user)
         try:
             result = client.get_login_result(login_id)
         except Exception as exc:
@@ -185,22 +233,37 @@ def build_wewe_router(
         if not share_link.startswith("https://mp.weixin.qq.com/s/"):
             raise HTTPException(status_code=400, detail="请粘贴以 https://mp.weixin.qq.com/s/ 开头的公众号文章分享链接")
         kb = resolve_kb(user.id, payload.knowledge_base_id)
+        started = time.perf_counter()
+        reservation = _reserve(user)
         try:
             info = client.get_mp_info(share_link)
             feed = client.add_feed(info)
             store.bind_upstream_feed(user.id, feed["upstream_feed_id"])
         except Exception as exc:
-            raise HTTPException(status_code=502, detail="公众号订阅失败，请确认已有可用读书账号、链接有效，并稍后再试") from exc
-        source_id = store.add_source(
-            user_id=user.id,
-            knowledge_base_id=int(kb["id"]),
-            source_type="mp",
-            name=feed["name"],
-            upstream_feed_id=feed["upstream_feed_id"],
-            intro=feed.get("intro") or "",
-            cover_url=feed.get("cover_url") or "",
-            subscribed=True,
-        )
+            settle_wewe_call(
+                billing, reservation, user_id=user.id, endpoint="/api/wewe/subscriptions",
+                status_code=502, latency_ms=int((time.perf_counter() - started) * 1000),
+                successful=False, meta={"share_link_host": "mp.weixin.qq.com", "error": str(exc)},
+            )
+            raise HTTPException(status_code=502, detail="公众号订阅失败，本次未扣费，请确认读书账号和链接后重试") from exc
+        try:
+            source_id = store.add_source(
+                user_id=user.id,
+                knowledge_base_id=int(kb["id"]),
+                source_type="mp",
+                name=feed["name"],
+                upstream_feed_id=feed["upstream_feed_id"],
+                intro=feed.get("intro") or "",
+                cover_url=feed.get("cover_url") or "",
+                subscribed=True,
+            )
+        except Exception as exc:
+            settle_wewe_call(
+                billing, reservation, user_id=user.id, endpoint="/api/wewe/subscriptions",
+                status_code=500, latency_ms=int((time.perf_counter() - started) * 1000),
+                successful=False, meta={"error": str(exc)},
+            )
+            raise
         try:
             collection = runner.start(
                 user_id=user.id,
@@ -208,6 +271,8 @@ def build_wewe_router(
                 knowledge_base_id=int(kb["id"]),
                 limit=payload.limit,
                 refresh=True,
+                reservation=reservation,
+                endpoint="/api/wewe/subscriptions",
             )
             already_running = False
         except CollectionAlreadyRunning:
@@ -263,6 +328,7 @@ def build_wewe_router(
         elif not store.owns_upstream_feed(user.id, payload.upstream_feed_id.strip()):
             raise HTTPException(status_code=403, detail="请先通过本公众号文章分享链接完成订阅")
 
+        _ensure_plan(user, require_quota=True)
         # 未指定知识库时落到用户的默认知识库，避免向量写入 knowledge_base_id=0 导致检索不到
         kb = resolve_kb(user.id, payload.knowledge_base_id)
         kb_id = int(kb["id"])
@@ -300,6 +366,8 @@ def build_wewe_router(
         if not source:
             raise HTTPException(status_code=404, detail="source not found")
         fields = {}
+        if payload.subscribed:
+            _ensure_plan(user, require_quota=True)
         if payload.subscribed is not None:
             fields["subscribed"] = payload.subscribed
         if payload.name is not None:
@@ -328,6 +396,7 @@ def build_wewe_router(
         if not source:
             raise HTTPException(status_code=404, detail="source not found")
         kb = resolve_kb(user.id, int(source.get("knowledge_base_id") or 0) or None)
+        reservation = _reserve(user)
         try:
             return runner.start(
                 user_id=user.id,
@@ -335,6 +404,8 @@ def build_wewe_router(
                 knowledge_base_id=int(kb["id"]),
                 limit=payload.limit,
                 refresh=payload.refresh,
+                reservation=reservation,
+                endpoint="/api/wewe/sources/{id}/collect",
             )
         except CollectionAlreadyRunning as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
@@ -470,22 +541,40 @@ def build_wewe_router(
         if not settings.wewe_image_vector_enabled:
             raise HTTPException(status_code=503, detail="native image vectors are disabled")
         kb = resolve_kb(user.id, payload.knowledge_base_id)
-        vector = pipeline.image_embedding.embed_text(payload.query) if pipeline.image_embedding else None
-        if not vector:
-            raise HTTPException(status_code=502, detail="image embedding failed")
-        hits = vector_index.search_images(
-            query_vector=vector,
-            user_id=user.id,
-            knowledge_base_id=int(kb["id"]),
-            article_versions=store.published_vector_versions(user.id, int(kb["id"])),
-            top_k=payload.top_k,
+        started = time.perf_counter()
+        reservation = _reserve(user)
+        endpoint = "/api/wewe/images/search"
+        try:
+            vector = pipeline.image_embedding.embed_text(payload.query) if pipeline.image_embedding else None
+            if not vector:
+                raise ValueError("image embedding returned no vector")
+            hits = vector_index.search_images(
+                query_vector=vector,
+                user_id=user.id,
+                knowledge_base_id=int(kb["id"]),
+                article_versions=store.published_vector_versions(user.id, int(kb["id"])),
+                top_k=payload.top_k,
+            )
+            public_hits = [public_image_hit(hit) for hit in hits]
+        except Exception as exc:
+            settle_wewe_call(
+                billing, reservation, user_id=user.id, endpoint=endpoint, status_code=502,
+                latency_ms=int((time.perf_counter() - started) * 1000), successful=False,
+                meta={"knowledge_base_id": kb["id"], "error": str(exc)},
+            )
+            logger.exception("wewe image search failed")
+            raise HTTPException(status_code=502, detail="图片语义检索失败，本次未扣费，请稍后重试") from exc
+        settle_wewe_call(
+            billing, reservation, user_id=user.id, endpoint=endpoint, status_code=200,
+            latency_ms=int((time.perf_counter() - started) * 1000), successful=True,
+            meta={"knowledge_base_id": kb["id"], "hit_count": len(public_hits)},
         )
         return {
             "query": payload.query,
             "knowledge_base_id": kb["id"],
             "vector_space": "image",
-            "count": len(hits),
-            "hits": [public_image_hit(hit) for hit in hits],
+            "count": len(public_hits),
+            "hits": public_hits,
         }
 
     return router

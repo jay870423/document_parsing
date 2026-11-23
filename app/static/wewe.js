@@ -15,6 +15,7 @@
     taskPollBusy: false,
     loadAllPromise: null,
     generation: 0,
+    statusRequest: 0,
     qr: {
       id: null,
       generation: 0,
@@ -88,16 +89,85 @@
     return !state.status || state.status.enabled !== true;
   }
 
+  function wewePlan() {
+    const plan = state.status && state.status.plan_entitlement;
+    if (!plan || typeof plan !== "object" || Array.isArray(plan)) return null;
+    if (typeof plan.active !== "boolean" || typeof plan.can_collect !== "boolean") return null;
+    const remaining = plan.remaining_calls;
+    if (remaining !== null && (!Number.isInteger(remaining) || remaining < 0)) return null;
+    return plan;
+  }
+
+  function weweSubscriptionBlocked() {
+    const plan = wewePlan();
+    return Boolean(!weweDisabled() && (!plan || plan.active !== true));
+  }
+
+  function weweCollectionBlocked() {
+    const plan = wewePlan();
+    return Boolean(!weweDisabled() && (!plan || plan.active !== true || plan.can_collect !== true));
+  }
+
+  function renderPlanNotice() {
+    const box = $("wewePlanNotice");
+    const plan = wewePlan();
+    let message = "正在检查套餐与剩余额度；历史文章、任务和导出均可继续查看。";
+    let warning = false;
+    if (state.statusError) {
+      message = "套餐状态暂时获取失败，请刷新状态后重试。";
+      warning = true;
+    } else if (weweDisabled()) {
+      message = "采集功能未启用，套餐与历史内容状态暂不可用。";
+    } else if (!plan) {
+      message = "套餐信息暂未返回或格式异常，账号绑定、新建采集和图片检索已暂停；历史文章、任务与导出仍可使用。";
+      warning = true;
+    } else if (plan.active === false) {
+      message = "暂无有效套餐：绑定账号、新建采集和图片检索已暂停；历史文章、任务与导出仍可使用。请切换到「套餐」申请开通。";
+      warning = true;
+    } else if (plan.can_collect === false) {
+      message = (plan.plan_name || "当前套餐") + "剩余额度不足：新建采集和图片检索已暂停；历史文章、任务与导出仍可使用且不扣费。请切换到「套餐」续费。";
+      warning = true;
+    } else {
+      const remaining = plan.remaining_calls == null ? "不限量" : "剩余 " + Number(plan.remaining_calls) + " 次";
+      message = (plan.plan_name || "当前套餐") + " · " + remaining + " · 文档、问答与采集任务共用额度；成功或部分成功采集扣 1 次，失败自动退回。";
+    }
+    box.textContent = message;
+    box.className = "wewe-plan-notice" + (warning ? " warn" : "");
+  }
+
+  function updateSourceActionAvailability() {
+    const disabled = weweDisabled();
+    const collectionBlocked = weweCollectionBlocked();
+    document.querySelectorAll("#weweSourceRows [data-wewe-action]").forEach((button) => {
+      const action = button.dataset.weweAction;
+      if (action === "collect") {
+        button.disabled = disabled || collectionBlocked || hasRunningTaskForSource(Number(button.dataset.id));
+      } else if (action === "toggle") {
+        const subscribed = button.dataset.subscribed === "1";
+        button.disabled = disabled || (!subscribed && collectionBlocked);
+      } else if (action === "delete-source") {
+        button.disabled = disabled;
+      }
+    });
+  }
+
   function updateFeatureAvailability() {
     const disabled = weweDisabled();
+    const subscriptionBlocked = weweSubscriptionBlocked();
+    const collectionBlocked = weweCollectionBlocked();
     [
-      "weweLoginBtn", "weweShareLink", "weweTarget", "weweName", "weweType", "weweAddBtn",
-      "weweArticleRefreshBtn", "weweTaskRefreshBtn", "weweArticleSource", "weweImageQuery", "weweImageSearchBtn",
+      "weweArticleRefreshBtn", "weweTaskRefreshBtn", "weweArticleSource",
     ].forEach((id) => { $(id).disabled = disabled; });
+    $("weweLoginBtn").disabled = disabled || subscriptionBlocked;
+    [
+      "weweShareLink", "weweTarget", "weweName", "weweType", "weweAddBtn",
+      "weweImageQuery", "weweImageSearchBtn",
+    ].forEach((id) => { $(id).disabled = disabled || collectionBlocked; });
     const exportLink = $("weweExportOpml");
     exportLink.classList.toggle("disabled", disabled);
     exportLink.setAttribute("aria-disabled", disabled ? "true" : "false");
     exportLink.tabIndex = disabled ? -1 : 0;
+    updateSourceActionAvailability();
     updateSubscribeAvailability();
   }
 
@@ -114,6 +184,21 @@
       } else {
         button.textContent = "采集功能未启用";
         setSubscribeMessage("当前环境未启用内容采集，账号绑定与订阅入口已停用。", "");
+      }
+      return;
+    }
+    if (weweCollectionBlocked()) {
+      const plan = wewePlan();
+      button.disabled = true;
+      if (!plan) {
+        button.textContent = "套餐状态未确认";
+        setSubscribeMessage("套餐信息暂未返回或格式异常，新计费操作已暂停；历史文章、任务与导出仍可使用。请点击「刷新状态」重试。", "err");
+      } else if (plan.active === false) {
+        button.textContent = "请先开通套餐";
+        setSubscribeMessage("暂无有效套餐，请先开通套餐：切换到「套餐」提交申请；查看历史文章和导出不扣费。", "err");
+      } else {
+        button.textContent = "剩余额度不足";
+        setSubscribeMessage("当前套餐剩余额度不足，请切换到「套餐」续费；已采集文章和导出仍可免费使用。", "err");
       }
       return;
     }
@@ -177,10 +262,13 @@
     updateSubscribeAvailability();
   }
 
-  async function loadWeweStatus() {
+  async function loadWeweStatus(generation = state.generation) {
+    if (generation !== state.generation) return false;
+    const requestId = ++state.statusRequest;
     const badge = $("weweState");
     try {
       const status = await api("/api/wewe/status");
+      if (generation !== state.generation || requestId !== state.statusRequest) return false;
       state.status = status;
       state.statusError = "";
       let label = "未启用";
@@ -192,6 +280,7 @@
       badge.textContent = label;
       badge.className = "badge" + (status.upstream_ok || (status.enabled && !status.upstream_configured) ? " ok" : "");
     } catch (err) {
+      if (generation !== state.generation || requestId !== state.statusRequest) return false;
       state.status = null;
       state.statusError = messageFrom(err);
       badge.textContent = "状态检查失败";
@@ -199,6 +288,8 @@
       state.accountsError = state.statusError;
     }
     updateFeatureAvailability();
+    renderPlanNotice();
+    return true;
   }
 
   async function loadWeweAccounts() {
@@ -215,6 +306,7 @@
 
   function renderSources() {
     const box = $("weweSourceRows");
+    const collectionBlocked = weweCollectionBlocked();
     $("weweSourceSummary").textContent = state.sources.length
       ? "共 " + state.sources.length + " 个来源 · 自动订阅已开启的来源"
       : "按公众号自动更新，也可单独采集或导出。";
@@ -237,8 +329,8 @@
           '</div>' +
           '<span class="wewe-status' + (subscribed ? "" : " warn") + '">' + (running ? "采集中" : (subscribed ? "已订阅" : "已暂停")) + '</span>' +
           '<div class="wewe-source-actions">' +
-            '<button class="teal" type="button" data-wewe-action="collect" data-id="' + Number(item.id) + '"' + (running ? " disabled" : "") + '>' + (running ? "正在采集…" : "立即采集") + '</button>' +
-            '<button class="secondary" type="button" data-wewe-action="toggle" data-id="' + Number(item.id) + '" data-subscribed="' + (subscribed ? "1" : "0") + '">' + (subscribed ? "暂停订阅" : "恢复订阅") + '</button>' +
+            '<button class="teal" type="button" data-wewe-action="collect" data-id="' + Number(item.id) + '"' + (running || collectionBlocked ? " disabled" : "") + '>' + (running ? "正在采集…" : "立即采集") + '</button>' +
+            '<button class="secondary" type="button" data-wewe-action="toggle" data-id="' + Number(item.id) + '" data-subscribed="' + (subscribed ? "1" : "0") + '"' + (!subscribed && collectionBlocked ? " disabled" : "") + '>' + (subscribed ? "暂停订阅" : "恢复订阅") + '</button>' +
             '<button class="secondary" type="button" data-wewe-action="delete-source" data-id="' + Number(item.id) + '">删除</button>' +
             '<span class="wewe-feed-links" aria-label="导出订阅">' +
               '<a class="secondary" href="/api/wewe/sources/' + Number(item.id) + '/feed.rss" target="_blank" rel="noopener">RSS</a>' +
@@ -364,6 +456,7 @@
       renderSources();
       if (finished.length) {
         await Promise.all([loadWeweSources(), loadWeweArticles()]);
+        await refreshWewePlan(generation);
         if (generation !== state.generation || weweDisabled()) return;
         const failed = finished.filter((item) => item.status === "failed" || item.status === "partial");
         const indexed = finished.reduce((sum, item) => sum + Number(item.indexed_count || 0), 0);
@@ -395,7 +488,8 @@
     if (state.loadAllPromise) return state.loadAllPromise;
     const generation = ++state.generation;
     state.loadAllPromise = (async function () {
-      await loadWeweStatus();
+      const applied = await loadWeweStatus(generation);
+      if (!applied || generation !== state.generation) return;
       if (weweDisabled()) {
         window.clearTimeout(state.taskTimer);
         state.taskTimer = null;
@@ -430,8 +524,14 @@
     return state.loadAllPromise;
   }
 
+  async function refreshWewePlan(generation = state.generation) {
+    if (generation !== state.generation) return;
+    await loadWeweStatus(generation);
+    if (generation === state.generation && !weweDisabled()) renderSources();
+  }
+
   async function startCollection(sourceId, generation = state.generation) {
-    if (generation !== state.generation || weweDisabled()) return;
+    if (generation !== state.generation || weweDisabled() || weweCollectionBlocked()) return;
     const result = await api("/api/wewe/sources/" + Number(sourceId) + "/collect", {
       method: "POST",
       body: JSON.stringify({ refresh: true }),
@@ -439,6 +539,7 @@
     if (generation !== state.generation || weweDisabled()) return;
     watchWeweTask(result.task_id);
     await loadWeweTasks(generation);
+    await refreshWewePlan(generation);
     if (generation !== state.generation || weweDisabled()) return;
     showNotice("采集任务 #" + result.task_id + " 已开始，可继续使用其他功能");
   }
@@ -448,6 +549,14 @@
     if (!button || !$("weweView").contains(button) || button.disabled) return;
     const action = button.dataset.weweAction;
     const id = Number(button.dataset.id || 0);
+    if (weweDisabled()) {
+      button.disabled = true;
+      return;
+    }
+    if (action === "toggle" && button.dataset.subscribed !== "1" && weweCollectionBlocked()) {
+      button.disabled = true;
+      return;
+    }
     if (action === "open-login") {
       await startWeweLogin();
       return;
@@ -482,7 +591,7 @@
     } catch (err) {
       showError(err);
     } finally {
-      if (document.body.contains(button)) button.disabled = false;
+      if (document.body.contains(button)) updateFeatureAvailability();
     }
   }
 
@@ -568,7 +677,7 @@
   }
 
   async function startWeweLogin() {
-    if (weweDisabled()) return;
+    if (weweDisabled() || weweSubscriptionBlocked()) return;
     closeWeweQr();
     const generation = ++state.qr.generation;
     const backdrop = $("weweQrBackdrop");
@@ -610,6 +719,7 @@
 
   async function subscribeMp(event) {
     event.preventDefault();
+    if (weweDisabled() || weweCollectionBlocked()) return;
     const button = $("weweSubscribeBtn");
     if (button.dataset.busy === "1") return;
     const input = $("weweShareLink");
@@ -635,6 +745,7 @@
       showNotice(result.message || "公众号已订阅，文章正在后台采集");
       if (taskId) watchWeweTask(taskId);
       await Promise.all([loadWeweSources(), loadWeweTasks()]);
+      await refreshWewePlan();
       $("weweStepCollect").scrollIntoView({ behavior: "smooth", block: "nearest" });
     } catch (err) {
       setSubscribeMessage(messageFrom(err), "err");
@@ -648,7 +759,7 @@
 
   async function addAdvancedSource() {
     const generation = state.generation;
-    if (weweDisabled()) return;
+    if (weweDisabled() || weweCollectionBlocked()) return;
     const button = $("weweAddBtn");
     const sourceType = $("weweType").value;
     const target = $("weweTarget").value.trim();
@@ -674,7 +785,7 @@
 
   async function searchWeweImages() {
     const generation = state.generation;
-    if (weweDisabled()) return;
+    if (weweDisabled() || weweCollectionBlocked()) return;
     const button = $("weweImageSearchBtn");
     const query = $("weweImageQuery").value.trim();
     if (!query) throw new Error("请输入图片描述");
@@ -700,6 +811,7 @@
         '</figure>';
       }).join("");
     } finally {
+      if (generation === state.generation) await refreshWewePlan(generation);
       updateFeatureAvailability();
       button.textContent = "搜索图片";
     }

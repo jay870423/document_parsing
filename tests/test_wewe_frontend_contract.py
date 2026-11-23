@@ -49,7 +49,8 @@ def test_wewe_disabled_state_short_circuits_data_requests_and_disables_controls(
     load_all = js.split("function loadWeweAll() {", 1)[1].split(
         "async function startCollection", 1
     )[0]
-    assert load_all.index("await loadWeweStatus();") < load_all.index("if (weweDisabled())")
+    assert load_all.index("await loadWeweStatus(generation);") < load_all.index("if (weweDisabled())")
+    assert "if (!applied || generation !== state.generation) return;" in load_all
     assert 'state.accountsError = "";' in load_all
     assert "renderAccounts();" in load_all
     disabled_accounts = js.split("function renderAccounts() {", 1)[1].split(
@@ -70,6 +71,25 @@ def test_wewe_disabled_state_short_circuits_data_requests_and_disables_controls(
         "weweAddBtn",
     ):
         assert f'"{control}"' in js
+
+
+def test_plan_catalog_ui_exposes_collection_capabilities_and_billing_rules():
+    html = CONSOLE.read_text(encoding="utf-8")
+    for element_id in ("planCapabilities", "planBillingRules", "wewePlanNotice"):
+        assert f'id="{element_id}"' in html
+    plans_view = html.split('<section id="plansView"', 1)[1].split('<section id="usageView"', 1)[0]
+    assert "文档、知识库问答与采集源共用套餐额度" in plans_view
+    assert "成功或部分成功的采集任务扣 1 次" in plans_view
+    assert "失败自动退回" in plans_view
+    assert "查看已采集来源、文章、历史任务和导出订阅不扣费" in plans_view
+    assert "p.capabilities" in html
+    assert "p.billing_rules" in html
+
+    js = (ROOT / "app" / "static" / "wewe.js").read_text(encoding="utf-8")
+    assert "function weweCollectionBlocked()" in js
+    assert "plan_entitlement" in js
+    assert "剩余额度不足" in js
+    assert "renderPlanNotice" in js
 
 
 def test_wewe_responsive_layout_and_touch_contract():

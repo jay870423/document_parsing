@@ -74,10 +74,13 @@ BILLING_SCHEMA = (
         subscription_id BIGINT NOT NULL,
         call_count BIGINT NOT NULL,
         state VARCHAR(16) NOT NULL DEFAULT 'reserved',
+        resource_type VARCHAR(64) NULL,
+        resource_id VARCHAR(64) NULL,
         created_at VARCHAR(40) NOT NULL,
         settled_at VARCHAR(40) NULL,
         INDEX idx_call_reservations_state_created (state, created_at),
         INDEX idx_call_reservations_user (user_id, created_at),
+        INDEX idx_call_reservations_resource (resource_type, resource_id),
         CONSTRAINT fk_call_reservations_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
         CONSTRAINT fk_call_reservations_subscription FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci

@@ -52,6 +52,35 @@
 .wewe-hero-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 .wewe-hero .badge { color: #fff; border-color: rgba(255,255,255,.35); background: rgba(255,255,255,.10); white-space: nowrap; }
 .wewe-hero .secondary { color: #fff; border-color: rgba(255,255,255,.45); background: rgba(255,255,255,.10); }
+.wewe-plan-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-top: 12px;
+  border: 1px solid #c8dfda;
+  border-radius: 10px;
+  padding: 11px 13px;
+  color: #28534e;
+  background: #f0f9f6;
+  font-size: 13px;
+  line-height: 1.65;
+}
+.wewe-plan-notice.warn {
+  border-color: #ead3a7;
+  color: #795315;
+  background: #fff9eb;
+}
+.wewe-plan-notice .secondary {
+  flex: none;
+  min-height: 38px;
+  padding: 6px 12px;
+  color: inherit;
+  border-color: currentColor;
+  background: rgba(255,255,255,.72);
+}
+.wewe-plan-notice > span { min-width: 0; }
 .wewe-steps {
   display: grid;
   grid-template-columns: repeat(3, minmax(0,1fr));

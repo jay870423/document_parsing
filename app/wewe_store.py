@@ -10,6 +10,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
+from app.billing import CallReservation, WEWE_TASK_RESOURCE_TYPE
 from app.config import Settings, get_settings
 from app.mysql import Connection, IntegrityError, OperationalError, connect as mysql_connect
 from app.mysql_schema import BILLING_SCHEMA, WEWE_SCHEMA
@@ -645,9 +646,18 @@ class WeWeStore:
         return [dict(row) for row in rows]
 
     # -- tasks ----------------------------------------------------
-    def create_task(self, user_id: int, source_id: int | None, kind: str = "manual") -> int:
+    def create_task(
+        self,
+        user_id: int,
+        source_id: int | None,
+        kind: str = "manual",
+        *,
+        reservation: CallReservation | None = None,
+    ) -> int:
         now = _now()
         heartbeat_at = _precise_now()
+        if reservation is not None and reservation.settled:
+            raise ValueError("call reservation already settled")
         try:
             with self.connect() as conn:
                 cur = conn.execute(
@@ -662,14 +672,29 @@ class WeWeStore:
                         self.worker_id, heartbeat_at, self._lease_deadline(), now, now,
                     ),
                 )
+                task_id = int(cur.lastrowid)
+                if reservation is not None:
+                    attached = conn.execute(
+                        """UPDATE call_reservations
+                           SET resource_type = ?, resource_id = ?
+                           WHERE reservation_id = ? AND user_id = ? AND subscription_id = ?
+                             AND state = 'reserved'
+                             AND resource_type IS NULL AND resource_id IS NULL""",
+                        (
+                            WEWE_TASK_RESOURCE_TYPE, str(task_id), reservation.reservation_id,
+                            int(user_id), reservation.subscription_id,
+                        ),
+                    )
+                    if attached.rowcount != 1:
+                        raise RuntimeError("call reservation cannot be attached to collection task")
                 if source_id is not None:
                     conn.execute(
                         "INSERT INTO wewe_collect_locks (source_id, task_id, created_at) VALUES (?,?,?)",
-                        (int(source_id), int(cur.lastrowid), now),
+                        (int(source_id), task_id, now),
                     )
         except IntegrityError as exc:
             raise CollectionAlreadyRunning("collection already running for this source") from exc
-        return int(cur.lastrowid)
+        return task_id
 
     def heartbeat_task(self, task_id: int) -> bool:
         """Renew only a live task owned by this worker; never resurrect another task."""
@@ -844,6 +869,14 @@ class WeWeStore:
                     conn.execute("DELETE FROM wewe_collect_locks WHERE task_id = ?", (task_id,))
                     recovered += 1
         return recovered
+
+    def get_task(self, task_id: int) -> dict | None:
+        """Return the authoritative task state for safe billing finalization."""
+        with self.connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM wewe_collect_tasks WHERE id = ?", (int(task_id),)
+            ).fetchone()
+        return dict(row) if row else None
 
     def list_tasks(self, user_id: int, limit: int = 50) -> list[dict]:
         with self.connect() as conn:

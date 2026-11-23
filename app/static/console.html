@@ -437,6 +437,53 @@
       line-height: 1.65;
     }
 
+    .plan-note-title {
+      display: block;
+      margin-bottom: 6px;
+      color: #174a46;
+      font-size: 15px;
+    }
+
+    .plan-capability-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 8px;
+      margin: 12px 0;
+    }
+
+    .plan-capability {
+      border: 1px solid #d5e6e2;
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: rgba(255, 255, 255, .78);
+      color: #294d49;
+      font-size: 13px;
+      line-height: 1.55;
+    }
+
+    .plan-capability::before {
+      content: "✓";
+      margin-right: 6px;
+      color: var(--teal);
+      font-weight: 800;
+    }
+
+    .plan-rule-title {
+      margin: 10px 0 4px;
+      color: #31514d;
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    .plan-rule-list {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 4px 22px;
+      margin: 0;
+      padding-left: 20px;
+      font-size: 13px;
+    }
+
     .plan-card {
       display: grid;
       gap: 10px;
@@ -899,6 +946,7 @@
     @media (max-width: 980px) {
       header, .layout { grid-template-columns: 1fr; }
       .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .plan-capability-grid { grid-template-columns: 1fr; }
       .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
       .app-nav { justify-content: flex-start; }
     }
@@ -906,6 +954,7 @@
     @media (max-width: 620px) {
       h1 { font-size: 28px; }
       .cards { grid-template-columns: 1fr; }
+      .plan-rule-list { grid-template-columns: 1fr; }
       .metric-grid { grid-template-columns: 1fr; }
       .account-actions, .tabs, .input-row { grid-template-columns: 1fr; }
       button, .link-btn { min-height: 44px; }
@@ -914,7 +963,7 @@
       .password-toggle { width: 44px; height: 44px; min-height: 44px; }
     }
   </style>
-  <link rel="stylesheet" href="/static/wewe.css?v=20261122-responsive2" />
+  <link rel="stylesheet" href="/static/wewe.css?v=20261123-entitlements1" />
 </head>
 <body>
   <main class="shell">
@@ -1053,7 +1102,22 @@
           </div>
 
           <section id="plansView" class="view active">
-            <div class="plan-note">注册成功即自动赠送 3 次免费体验额度，可直接试用文档解析、向量入库和知识库问答。体验满意后再选择低价套餐。</div>
+            <div class="plan-note">
+              <strong class="plan-note-title">文档、知识库问答与采集源共用套餐额度</strong>
+              注册成功即自动赠送 3 次免费体验额度，可体验文档解析、知识库问答及公众号 / RSS 采集。以下能力适用于全部套餐，次数不同，能力不减配。
+              <div id="planCapabilities" class="plan-capability-grid" aria-label="全部套餐能力">
+                <span class="plan-capability">文档解析、向量入库与知识库问答</span>
+                <span class="plan-capability">公众号 / RSS 采集源与定时采集</span>
+                <span class="plan-capability">采集文章检索与图片语义检索</span>
+              </div>
+              <div class="plan-rule-title">扣费与退款规则</div>
+              <ul id="planBillingRules" class="plan-rule-list">
+                <li>文档解析、知识库检索/问答、图片语义检索：每次成功调用扣 1 次</li>
+                <li>公众号订阅并采集、手动采集、定时采集：成功或部分成功的采集任务扣 1 次</li>
+                <li>采集任务或图片检索失败自动退回本次预留额度；仅绑定账号不扣费</li>
+                <li>查看已采集来源、文章、历史任务和导出订阅不扣费</li>
+              </ul>
+            </div>
             <div id="plans" class="cards"></div>
           </section>
 
@@ -1082,6 +1146,10 @@
               <li id="weweStepSubscribe"><span>2</span>粘贴文章链接</li>
               <li id="weweStepCollect"><span>3</span>自动采集入库</li>
             </ol>
+
+            <div id="wewePlanNotice" class="wewe-plan-notice" role="status" aria-live="polite">
+              正在检查套餐与剩余额度；历史内容查看和导出不受新采集额度限制。
+            </div>
 
             <section class="wewe-card" aria-labelledby="weweAccountTitle">
               <div class="wewe-card-head">
@@ -1811,6 +1879,16 @@
     async function loadPlans() {
       const data = await api("/api/billing/plans");
       plans = data.plans || [];
+      const capabilitySource = plans.find((p) => Array.isArray(p.capabilities) && p.capabilities.length);
+      const billingSource = plans.find((p) => Array.isArray(p.billing_rules) && p.billing_rules.length);
+      if (capabilitySource) {
+        $("planCapabilities").innerHTML = capabilitySource.capabilities
+          .map((item) => `<span class="plan-capability">${escapeHtml(item)}</span>`).join("");
+      }
+      if (billingSource) {
+        $("planBillingRules").innerHTML = billingSource.billing_rules
+          .map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+      }
       const planCopy = {
         free_trial: {
           tag: "注册赠送",
@@ -1837,7 +1915,8 @@
           <div class="price">${Number(p.price_cents) === 0 ? "免费" : `￥${p.price_yuan}`}</div>
           <div class="plan-desc">${planCopy[p.code]?.desc || "适合按需使用文档解析和知识库问答。"}</div>
           <div class="plan-meta">
-            <span>包含调用：${p.included_calls} 次</span>
+            <span>文档、问答、采集源共用 ${p.included_calls} 次</span>
+            <span>成功或部分成功采集任务扣 1 次，失败退回</span>
             <span>周期：${periodText[p.billing_period] || p.billing_period}</span>
             <span>${Number(p.price_cents) === 0 ? "注册后自动到账" : `约 ￥${(Number(p.price_cents) / 100 / Math.max(1, Number(p.included_calls))).toFixed(2)} / 次`}</span>
           </div>
@@ -2090,6 +2169,6 @@
     initAgreementControls();
     loadPlans().then(loadMe).catch(showError);
   </script>
-  <script src="/static/wewe.js?v=20261122-responsive2"></script>
+  <script src="/static/wewe.js?v=20261123-entitlements1"></script>
 </body>
 </html>

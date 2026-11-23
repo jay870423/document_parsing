@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import secrets
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -97,14 +98,31 @@ class CallReservation:
 
 
 from app.config import Settings, get_settings
-from app.mysql import Connection, IntegrityError, Row, connect as mysql_connect
+from app.mysql import Connection, IntegrityError, OperationalError, Row, connect as mysql_connect
 from app.mysql_schema import BILLING_SCHEMA
+
+logger = logging.getLogger(__name__)
+WEWE_TASK_RESOURCE_TYPE = "wewe_collect_task"
 
 PLAN_SEEDS = (
     ("free_trial", "新人免费体验包", "trial", 0, 3, 0),
     ("personal_light", "个人轻量版", "month", 990, 100, 10),
     ("personal_standard", "个人标准版", "month", 1990, 300, 20),
     ("personal_pro", "专业增强版", "month", 4990, 1000, 30),
+)
+
+# All plans share the same capability set and differ by price/quota. Keep the
+# commercial description beside the plan catalogue so API and UI cannot drift.
+PLAN_CAPABILITIES = (
+    "文档解析、向量入库与知识库问答",
+    "公众号 / RSS 采集源与定时采集",
+    "采集文章检索与图片语义检索",
+)
+PLAN_BILLING_RULES = (
+    "文档解析、知识库检索/问答、图片语义检索：每次成功调用扣 1 次",
+    "公众号订阅并采集、手动采集、定时采集：每个成功或部分成功任务扣 1 次",
+    "采集任务或图片检索失败自动退回本次预留额度；仅绑定账号不扣费",
+    "查看已采集来源、文章、历史任务和导出订阅不扣费",
 )
 
 
@@ -126,10 +144,23 @@ class BillingStore:
                 conn.execute(statement)
             self._ensure_column(conn, "users", "phone", "VARCHAR(32) NULL")
             self._ensure_column(conn, "api_keys", "raw_key", "VARCHAR(255) NULL")
+            self._ensure_column(conn, "call_reservations", "resource_type", "VARCHAR(64) NULL")
+            self._ensure_column(conn, "call_reservations", "resource_id", "VARCHAR(64) NULL")
+            self._ensure_index(
+                conn,
+                "call_reservations",
+                "idx_call_reservations_resource",
+                "(`resource_type`, `resource_id`)",
+            )
             self._seed_plans(conn)
 
     def _ensure_column(self, conn: Connection, table: str, column: str, definition: str) -> None:
-        allowed = {("users", "phone"), ("api_keys", "raw_key")}
+        allowed = {
+            ("users", "phone"),
+            ("api_keys", "raw_key"),
+            ("call_reservations", "resource_type"),
+            ("call_reservations", "resource_id"),
+        }
         if (table, column) not in allowed:
             raise ValueError("不允许的 schema 变更")
         row = conn.execute(
@@ -138,7 +169,27 @@ class BillingStore:
             (self.settings.mysql_database, table, column),
         ).fetchone()
         if not row:
-            conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+            try:
+                conn.execute(f"ALTER TABLE `{table}` ADD COLUMN `{column}` {definition}")
+            except OperationalError as exc:
+                if not exc.args or int(exc.args[0]) != 1060:
+                    raise
+
+    def _ensure_index(self, conn: Connection, table: str, index: str, columns: str) -> None:
+        if (table, index) != ("call_reservations", "idx_call_reservations_resource"):
+            raise ValueError("不允许的 schema 索引变更")
+        row = conn.execute(
+            """SELECT 1 FROM information_schema.statistics
+               WHERE table_schema = ? AND table_name = ? AND index_name = ?""",
+            (self.settings.mysql_database, table, index),
+        ).fetchone()
+        if row:
+            return
+        try:
+            conn.execute(f"ALTER TABLE `{table}` ADD INDEX `{index}` {columns}")
+        except OperationalError as exc:
+            if not exc.args or int(exc.args[0]) != 1061:
+                raise
 
     def _seed_plans(self, conn: Connection) -> None:
         plans = list(PLAN_SEEDS)
@@ -670,7 +721,17 @@ class BillingStore:
     def list_plans(self) -> list[dict[str, Any]]:
         with self.connect() as conn:
             rows = conn.execute("SELECT * FROM plans WHERE is_active = 1 ORDER BY sort_order").fetchall()
-            return [dict(row) | {"price_yuan": round(int(row["price_cents"]) / 100, 2)} for row in rows]
+            return [
+                dict(row)
+                | {
+                    "price_yuan": round(int(row["price_cents"]) / 100, 2),
+                    "collection_enabled": True,
+                    "capabilities": list(PLAN_CAPABILITIES),
+                    "billing_rules": list(PLAN_BILLING_RULES),
+                    "quota_scope": "documents_and_collection",
+                }
+                for row in rows
+            ]
 
     def grant_subscription(
         self,
@@ -907,8 +968,9 @@ class BillingStore:
                 """SELECT id, subscription_id, call_count
                    FROM call_reservations
                    WHERE state = 'reserved' AND created_at <= ?
+                     AND (resource_type IS NULL OR resource_type <> ?)
                    ORDER BY id LIMIT ?""",
-                (cutoff, batch_size),
+                (cutoff, WEWE_TASK_RESOURCE_TYPE, batch_size),
             ).fetchall()
         refunded = 0
         for row in rows:
@@ -917,8 +979,9 @@ class BillingStore:
                 claimed = conn.execute(
                     """UPDATE call_reservations
                        SET state = 'expired', settled_at = ?
-                       WHERE id = ? AND state = 'reserved'""",
-                    (now, row["id"]),
+                       WHERE id = ? AND state = 'reserved'
+                         AND (resource_type IS NULL OR resource_type <> ?)""",
+                    (now, row["id"], WEWE_TASK_RESOURCE_TYPE),
                 )
                 if claimed.rowcount != 1:
                     continue
@@ -931,6 +994,71 @@ class BillingStore:
                     raise RuntimeError("abandoned reservation ledger is inconsistent")
                 refunded += 1
         return refunded
+
+    def reconcile_wewe_task_reservations(self, batch_size: int = 100) -> int:
+        """Settle only terminal collection tasks from their original reservation.
+
+        Running tasks are deliberately ignored: their lifetime is governed by the
+        task lease/heartbeat protocol, not by the generic reservation TTL.  A
+        failed settlement stays reserved so a later idempotent pass can retry it.
+        """
+        batch_size = max(1, min(int(batch_size), 1000))
+        with self.connect() as conn:
+            rows = conn.execute(
+                """SELECT r.reservation_id, r.user_id, r.subscription_id, r.call_count,
+                          t.id AS task_id, t.source_id, t.kind, t.status,
+                          t.article_count, t.indexed_count
+                   FROM call_reservations AS r
+                   JOIN wewe_collect_tasks AS t
+                     ON CAST(r.resource_id AS UNSIGNED) = t.id AND r.user_id = t.user_id
+                   WHERE r.state = 'reserved' AND r.resource_type = ?
+                     AND t.status IN ('success', 'partial', 'failed')
+                   ORDER BY r.id LIMIT ?""",
+                (WEWE_TASK_RESOURCE_TYPE, batch_size),
+            ).fetchall()
+
+        settled = 0
+        for row in rows:
+            status = str(row["status"])
+            chargeable = status in {"success", "partial"}
+            reservation = CallReservation(
+                user_id=int(row["user_id"]),
+                subscription_id=int(row["subscription_id"]),
+                call_count=int(row["call_count"]),
+                reservation_id=str(row["reservation_id"]),
+            )
+            kind = str(row["kind"] or "manual")
+            try:
+                self.consume_call(
+                    user_id=reservation.user_id,
+                    api_key_id=None,
+                    endpoint=(
+                        "/api/wewe/scheduler/collect" if kind == "scheduled"
+                        else "/api/wewe/sources/{id}/collect"
+                    ),
+                    method="POST",
+                    status_code=200 if chargeable else 500,
+                    latency_ms=0,
+                    call_count=1 if chargeable else 0,
+                    reservation=reservation,
+                    meta={
+                        "task_id": int(row["task_id"]),
+                        "source_id": row["source_id"],
+                        "trigger": "scheduled" if kind == "scheduled" else kind,
+                        "task_status": status,
+                        "article_count": int(row["article_count"] or 0),
+                        "indexed_count": int(row["indexed_count"] or 0),
+                        "reconciled": True,
+                    },
+                )
+            except Exception:
+                logger.exception(
+                    "collection task reservation settlement needs retry: task=%s reservation=%s",
+                    row["task_id"], reservation.reservation_id,
+                )
+                continue
+            settled += 1
+        return settled
 
     @staticmethod
     def _insert_usage_event(

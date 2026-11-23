@@ -2,13 +2,17 @@ from __future__ import annotations
 
 import importlib
 import base64
+from concurrent.futures import ThreadPoolExecutor
+from datetime import timedelta
+import threading
+import time
 from types import SimpleNamespace
 
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
-from app.billing import BillingStore
+from app.billing import BillingStore, hash_lookup_secret, utc_now
 from app.config import get_settings
 from app.wewe_store import WeWeStore
 
@@ -50,6 +54,101 @@ def _session_client(main, user_id: int) -> TestClient:
     client = TestClient(main.app)
     client.cookies.set("session_token", main.billing_store.create_session(user_id))
     return client
+
+
+def test_sms_slider_challenge_is_bound_to_original_phone(auth_app):
+    main = auth_app
+    main.settings.app_sms_enabled = False
+    phone_a = "13800138000"
+    phone_b = "13900139000"
+    challenge_id = "sl_cross_phone_must_fail"
+    main.billing_store.create_slider_challenge(
+        challenge_id=challenge_id,
+        target_hash=hash_lookup_secret(f"{challenge_id}:100"),
+        expires_at=utc_now() + timedelta(minutes=3),
+        ip_address="testclient",
+        phone=phone_a,
+    )
+    client = TestClient(main.app)
+
+    response = client.post("/api/auth/sms/send", json={
+        "phone": phone_b,
+        "challenge_id": challenge_id,
+        "slider_offset": 100,
+    })
+
+    assert response.status_code == 400
+    with main.billing_store.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sms_verification_codes").fetchone()[0] == 0
+
+    # A wrong-phone attempt must not consume the legitimate user's challenge.
+    response = client.post("/api/auth/sms/send", json={
+        "phone": phone_a,
+        "challenge_id": challenge_id,
+        "slider_offset": 100,
+    })
+    assert response.status_code == 200
+    assert len(response.json()["debug_code"]) == 6
+
+
+def test_sms_send_is_serialized_per_phone(auth_app, monkeypatch):
+    main = auth_app
+    main.settings.app_sms_enabled = True
+    main.settings.app_sms_provider = "tencent"
+    phone = "13800138000"
+    send_count = 0
+    send_count_lock = threading.Lock()
+
+    class SlowTencentClient:
+        def __init__(self, _settings):
+            pass
+
+        def send_code(self, **_kwargs):
+            nonlocal send_count
+            with send_count_lock:
+                send_count += 1
+            time.sleep(0.25)
+            return SimpleNamespace(ok=True, provider_message_id="msg-test", error="")
+
+    monkeypatch.setattr(main, "TencentSmsClient", SlowTencentClient)
+    challenge_ids = ["sl_concurrent_send_a", "sl_concurrent_send_b"]
+    for challenge_id in challenge_ids:
+        main.billing_store.create_slider_challenge(
+            challenge_id=challenge_id,
+            target_hash=hash_lookup_secret(f"{challenge_id}:100"),
+            expires_at=utc_now() + timedelta(minutes=3),
+            ip_address="testclient",
+            phone=phone,
+        )
+
+    barrier = threading.Barrier(2)
+
+    def send(challenge_id):
+        barrier.wait(timeout=10)
+        with TestClient(main.app) as client:
+            return client.post("/api/auth/sms/send", json={
+                "phone": phone,
+                "challenge_id": challenge_id,
+                "slider_offset": 100,
+            })
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        responses = list(executor.map(send, challenge_ids))
+
+    assert [response.status_code for response in responses].count(200) == 1
+    assert any(
+        response.status_code == 429 and "正在发送" in response.json()["detail"]
+        for response in responses
+    )
+    assert send_count == 1
+    with main.billing_store.connect() as conn:
+        assert conn.execute("SELECT COUNT(*) FROM sms_verification_codes").fetchone()[0] == 1
+
+
+def test_slider_challenge_requires_a_valid_phone(auth_app):
+    client = TestClient(auth_app.app)
+    assert client.get("/api/auth/slider-challenge").status_code == 400
+    assert client.get("/api/auth/slider-challenge?phone=not-a-phone").status_code == 400
 
 
 def test_docs_openapi_and_debug_require_authentication(auth_app):

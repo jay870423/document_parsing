@@ -1090,9 +1090,10 @@ class BillingStore:
                 ),
             )
 
-    def verify_slider_challenge(self, challenge_id: str, accepted_hashes: list[str], ip_address: str) -> bool:
+    def verify_slider_challenge(self, challenge_id: str, accepted_hashes: list[str], ip_address: str, phone: str) -> bool:
+        phone_norm = normalize_phone(phone)
         with self.connect() as conn:
-            row = conn.execute("SELECT * FROM slider_challenges WHERE id = ?", (challenge_id,)).fetchone()
+            row = conn.execute("SELECT * FROM slider_challenges WHERE id = ? FOR UPDATE", (challenge_id,)).fetchone()
             if not row or row["used_at"]:
                 return False
             expires_at = from_iso(row["expires_at"])
@@ -1100,10 +1101,37 @@ class BillingStore:
                 return False
             if str(row["ip_address"]) != ip_address:
                 return False
+            if not phone_norm or normalize_phone(str(row["phone"] or "")) != phone_norm:
+                return False
             if str(row["target_hash"]) not in set(accepted_hashes):
                 return False
-            conn.execute("UPDATE slider_challenges SET used_at = ? WHERE id = ?", (to_iso(utc_now()), challenge_id))
+            claimed = conn.execute(
+                "UPDATE slider_challenges SET used_at = ? WHERE id = ? AND used_at IS NULL",
+                (to_iso(utc_now()), challenge_id),
+            )
+            if claimed.rowcount != 1:
+                return False
             return True
+
+    @contextmanager
+    def sms_send_lock(self, phone: str, ip_address: str) -> Iterator[None]:
+        """Serialize rate checks and provider sends across all app processes."""
+        keys = sorted({
+            hash_lookup_secret("sms-send-phone:" + normalize_phone(phone)),
+            hash_lookup_secret("sms-send-ip:" + ip_address),
+        })
+        with self.connect() as conn:
+            acquired: list[str] = []
+            try:
+                for key in keys:
+                    row = conn.execute("SELECT GET_LOCK(?, 0)", (key,)).fetchone()
+                    if not row or row[0] != 1:
+                        raise PermissionError("验证码正在发送，请稍后再试")
+                    acquired.append(key)
+                yield
+            finally:
+                for key in reversed(acquired):
+                    conn.execute("SELECT RELEASE_LOCK(?)", (key,))
 
     def sms_send_allowed(
         self,
@@ -1188,6 +1216,7 @@ class BillingStore:
                 WHERE phone = ? AND purpose = ? AND used_at IS NULL
                 ORDER BY created_at DESC
                 LIMIT 1
+                FOR UPDATE
                 """,
                 (phone_norm, purpose),
             ).fetchone()
@@ -1202,7 +1231,12 @@ class BillingStore:
 
             ok = verify_password(code, row["code_salt"], row["code_hash"])
             if ok:
-                conn.execute("UPDATE sms_verification_codes SET used_at = ? WHERE id = ?", (to_iso(utc_now()), row["id"]))
+                claimed = conn.execute(
+                    "UPDATE sms_verification_codes SET used_at = ? WHERE id = ? AND used_at IS NULL",
+                    (to_iso(utc_now()), row["id"]),
+                )
+                if claimed.rowcount != 1:
+                    return False, "验证码不存在或已使用"
                 return True, ""
 
             attempts = int(row["attempts"]) + 1

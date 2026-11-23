@@ -1,11 +1,25 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
+import threading
 
 import pytest
 
 from app.billing import BillingStore, utc_now
+
+
+def _concurrent_calls(callback, count=16):
+    barrier = threading.Barrier(count)
+
+    def invoke():
+        barrier.wait(timeout=10)
+        return callback()
+
+    with ThreadPoolExecutor(max_workers=count) as executor:
+        futures = [executor.submit(invoke) for _ in range(count)]
+        return [future.result(timeout=45) for future in futures]
 
 
 def test_email_auth_password_and_session_roundtrip(mysql_settings):
@@ -154,11 +168,11 @@ def test_subscription_quota_usage_summary_and_purchase(mysql_settings):
 
 def test_slider_challenge_single_use_and_ip_binding(mysql_settings):
     store = BillingStore(mysql_settings)
-    store.create_slider_challenge("challenge-1", "target", utc_now() + timedelta(minutes=5), "127.0.0.1")
-    assert not store.verify_slider_challenge("challenge-1", ["target"], "127.0.0.2")
-    assert not store.verify_slider_challenge("challenge-1", ["wrong"], "127.0.0.1")
-    assert store.verify_slider_challenge("challenge-1", ["wrong", "target"], "127.0.0.1")
-    assert not store.verify_slider_challenge("challenge-1", ["target"], "127.0.0.1")
+    store.create_slider_challenge("challenge-1", "target", utc_now() + timedelta(minutes=5), "127.0.0.1", "13800138000")
+    assert not store.verify_slider_challenge("challenge-1", ["target"], "127.0.0.2", "13800138000")
+    assert not store.verify_slider_challenge("challenge-1", ["wrong"], "127.0.0.1", "13800138000")
+    assert store.verify_slider_challenge("challenge-1", ["wrong", "target"], "127.0.0.1", "13800138000")
+    assert not store.verify_slider_challenge("challenge-1", ["target"], "127.0.0.1", "13800138000")
 
 
 def test_sms_rate_limit_code_expiry_and_lock(mysql_settings):
@@ -179,6 +193,65 @@ def test_sms_rate_limit_code_expiry_and_lock(mysql_settings):
     store.store_sms_code(other, "654321", "login", utc_now() + timedelta(minutes=5), "127.0.0.2")
     assert store.verify_sms_code(other, "654321", "login", 900) == (True, "")
     assert store.verify_sms_code(other, "654321", "login", 900)[0] is False
+
+
+def test_slider_challenge_is_consumed_once_under_concurrency(mysql_settings):
+    store = BillingStore(mysql_settings)
+    for round_no in range(8):
+        challenge_id = f"challenge-concurrent-{round_no}"
+        store.create_slider_challenge(
+            challenge_id, "target", utc_now() + timedelta(minutes=5),
+            "127.0.0.1", "13800138000",
+        )
+
+        results = _concurrent_calls(
+            lambda: store.verify_slider_challenge(
+                challenge_id, ["target"], "127.0.0.1", "13800138000",
+            )
+        )
+
+        assert results.count(True) == 1
+
+
+def test_sms_code_is_consumed_once_under_concurrency(mysql_settings):
+    store = BillingStore(mysql_settings)
+    phone = "13800138000"
+    store.store_sms_code(
+        phone, "123456", "register", utc_now() + timedelta(minutes=5), "127.0.0.1",
+    )
+
+    results = _concurrent_calls(
+        lambda: store.verify_sms_code(phone, "123456", "register", 900)
+    )
+
+    assert [ok for ok, _message in results].count(True) == 1
+
+
+def test_sms_send_lock_covers_phone_ip_and_releases_after_errors(mysql_settings):
+    store = BillingStore(mysql_settings)
+    phone_a = "13800138000"
+    phone_b = "13900139000"
+    ip_a = "127.0.0.1"
+    ip_b = "127.0.0.2"
+
+    with store.sms_send_lock(phone_a, ip_a):
+        with pytest.raises(PermissionError, match="正在发送"):
+            with store.sms_send_lock(phone_a, ip_b):
+                pass
+        with pytest.raises(PermissionError, match="正在发送"):
+            with store.sms_send_lock(phone_b, ip_a):
+                pass
+        # A failed second-key acquisition must release any key already held.
+        with store.sms_send_lock(phone_b, ip_b):
+            pass
+
+    with pytest.raises(RuntimeError, match="provider failed"):
+        with store.sms_send_lock(phone_a, ip_a):
+            raise RuntimeError("provider failed")
+
+    # Normal return and exceptional exit must both release both named locks.
+    with store.sms_send_lock(phone_a, ip_a):
+        pass
 
 
 def test_failed_connection_rolls_back_and_integrity_error_is_value_error(mysql_settings):

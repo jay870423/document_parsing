@@ -819,7 +819,7 @@ def register(payload: RegisterRequest, request: Request, response: Response) -> 
 @app.get("/api/auth/slider-challenge", response_model=SliderChallengeResponse)
 def slider_challenge(request: Request, phone: str = "") -> dict:
     phone_norm = normalize_phone(phone)
-    if phone_norm and not billing_store.is_valid_cn_phone(phone_norm):
+    if not phone_norm or not billing_store.is_valid_cn_phone(phone_norm):
         raise HTTPException(status_code=400, detail="手机号格式不正确")
     width = 300
     height = 150
@@ -866,9 +866,17 @@ def send_sms_code(payload: SmsSendRequest, request: Request) -> dict:
         hash_lookup_secret(f"{payload.challenge_id}:{x}")
         for x in range(max(0, payload.slider_offset - tolerance), payload.slider_offset + tolerance + 1)
     ]
-    if not billing_store.verify_slider_challenge(payload.challenge_id, accepted_hashes, ip_address):
+    if not billing_store.verify_slider_challenge(payload.challenge_id, accepted_hashes, ip_address, phone):
         raise HTTPException(status_code=400, detail="滑块验证失败，请重试")
 
+    try:
+        with billing_store.sms_send_lock(phone, ip_address):
+            return _deliver_sms_code(phone, ip_address)
+    except PermissionError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+
+def _deliver_sms_code(phone: str, ip_address: str) -> dict:
     allowed, reason = billing_store.sms_send_allowed(
         phone=phone,
         ip_address=ip_address,

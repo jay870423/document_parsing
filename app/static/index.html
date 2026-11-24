@@ -1233,26 +1233,83 @@
         position: static;
         max-height: none;
         overflow: visible;
+        display: contents;
       }
 
       .tabs {
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        order: 0;
+        grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
       }
+
+      .workspace-main { order: 1; }
+      .kb-strip { order: 2; }
+      .doc-panel { order: 3; }
+      .nav-link, .btn, .check, .chip, .text-btn, .source-link { min-height: 44px; }
+      input[type="text"], input[type="number"], textarea, select { min-height: 44px; }
+      input[type="file"] { min-height: 44px; }
     }
 
-    @media (max-width: 760px) {
+    @media (max-width: 900px) {
       .shell {
-        padding: 12px 12px 24px;
+        margin: 0 auto;
+        padding: 8px 12px calc(24px + env(safe-area-inset-bottom, 0px));
       }
 
       .topbar {
         position: static;
         grid-template-columns: 1fr;
+        padding: 12px;
       }
 
-      .tabs {
-        grid-template-columns: 1fr;
+      .topbar-actions {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        justify-content: stretch;
       }
+
+      #healthText {
+        grid-column: 1 / -1;
+        justify-content: center;
+        white-space: normal;
+        text-align: center;
+      }
+
+      .nav-link {
+        min-height: 44px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .workspace { gap: 12px; }
+      .workspace-side { display: contents; }
+      .workspace-main { order: 1; }
+      .kb-strip { order: 2; margin-bottom: 0; }
+      .doc-panel { order: 3; margin-bottom: 0; }
+
+      .tabs {
+        order: 0;
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+        gap: 6px;
+        padding: 6px;
+        background: rgba(255, 255, 255, .96);
+        backdrop-filter: blur(10px);
+      }
+
+      .tab-btn {
+        min-height: 48px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 10px 8px;
+        text-align: center;
+      }
+
+      .tab-btn::before { display: none; }
+      .panel { padding: 14px; scroll-margin-top: 76px; }
 
       .search-layout,
       .split-layout,
@@ -1260,13 +1317,50 @@
         grid-template-columns: 1fr;
       }
 
-      .topbar-actions {
-        justify-content: flex-start;
+      input[type="text"], input[type="number"], textarea, select {
+        min-height: 48px;
+        font-size: 16px;
       }
 
-      .doc-table {
-        min-width: 620px;
+      input[type="file"] {
+        width: 100%;
+        min-height: 48px;
+        font-size: 16px;
       }
+
+      input[type="file"]::file-selector-button {
+        min-height: 40px;
+        margin-right: 10px;
+      }
+
+      textarea { min-height: 112px; }
+
+      .btn {
+        min-height: 48px;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .mobile-action-row {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .mobile-action-row .btn { width: 100%; }
+
+      .check {
+        min-height: 44px;
+        padding: 8px 12px;
+      }
+
+      .check input { width: 20px; height: 20px; }
+      .chip, .text-btn, .source-link { min-height: 44px; }
+      .text-btn { padding: 8px 4px; }
+      .source-link { display: inline-flex; align-items: center; }
+      .split-list, .split-detail { max-height: 280px; }
+      .doc-head { flex-wrap: wrap; }
+      .doc-table { min-width: 620px; }
     }
   </style>
 </head>
@@ -1353,7 +1447,7 @@
         <label class="check"><input id="runVision" type="checkbox" /> 启用 Vision 图片结构化</label>
         <label class="check"><input id="ingestVector" type="checkbox" /> 处理后写入 Qdrant</label>
       </div>
-      <div class="row">
+      <div class="row mobile-action-row">
         <button id="processBtn" class="btn">开始处理</button>
         <button id="processRebuildBtn" class="btn secondary" type="button">清空并重建索引后处理</button>
       </div>
@@ -1466,7 +1560,7 @@
             <textarea id="searchQuery" placeholder="请输入你的问题，例如：SPI 的时钟极性和相位如何配置？"></textarea>
           </div>
 
-          <div class="row">
+          <div class="row mobile-action-row">
             <button id="searchBtn" class="btn secondary">仅检索</button>
             <button id="answerBtn" class="btn">生成答案</button>
             <button id="clearChatBtn" class="btn secondary">清空历史</button>
@@ -1973,7 +2067,9 @@
         renderKnowledgeDocuments([]);
         if (!quiet) showToast(e.message || "加载知识库文档失败", "err");
       }
-    }`r`n    async function deleteKnowledgeDocument(documentId, documentName) {
+    }
+
+    async function deleteKnowledgeDocument(documentId, documentName) {
       const kbId = selectedKnowledgeBaseId();
       if (!kbId || !documentId) return;
       const label = documentName || `#${documentId}`;
@@ -2422,7 +2518,9 @@
 
     function initTabs() {
       const buttons = Array.from(document.querySelectorAll(".tab-btn"));
-      const showTab = (tabId) => {
+      const mobileLayout = window.matchMedia("(max-width: 900px)");
+      const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
+      const showTab = (tabId, { scroll = false } = {}) => {
         const nextTab = isTabVisible(tabId) ? tabId : "processPanel";
         buttons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === tabId));
         document.querySelectorAll(".panel").forEach((panel) => {
@@ -2430,12 +2528,18 @@
         });
         buttons.forEach((btn) => btn.classList.toggle("active", btn.dataset.tab === nextTab));
         localStorage.setItem(TAB_STORAGE_KEY, nextTab);
+        if (scroll) {
+          requestAnimationFrame(() => $(nextTab)?.scrollIntoView({
+            behavior: reducedMotion.matches ? "auto" : "smooth",
+            block: "start",
+          }));
+        }
       };
       activateTab = showTab;
 
       buttons.forEach((btn) => btn.addEventListener("click", () => {
         if (btn.hidden) return;
-        showTab(btn.dataset.tab);
+        showTab(btn.dataset.tab, { scroll: mobileLayout.matches });
       }));
 
       const saved = localStorage.getItem(TAB_STORAGE_KEY);
@@ -2509,11 +2613,11 @@
     $("refreshKnowledgeDocumentsBtn").addEventListener("click", () => loadKnowledgeDocuments());
     $("createKnowledgeBaseBtn").addEventListener("click", createKnowledgeBase);
     $("kbUploadShortcutBtn").addEventListener("click", () => {
-      if (typeof activateTab === "function") activateTab("processPanel");
-      $("fileInput").focus();
+      if (typeof activateTab === "function") activateTab("processPanel", { scroll: true });
+      $("fileInput").click();
     });
     $("kbAskShortcutBtn").addEventListener("click", () => {
-      if (typeof activateTab === "function") activateTab("searchPanel");
+      if (typeof activateTab === "function") activateTab("searchPanel", { scroll: true });
       $("searchQuery").focus();
     });
     $("newKnowledgeBaseName").addEventListener("keydown", (event) => {

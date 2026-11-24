@@ -31,6 +31,8 @@
         var(--paper);
     }
 
+    body.modal-open { overflow: hidden; }
+
     .shell {
       max-width: 1180px;
       margin: 28px auto;
@@ -673,6 +675,7 @@
       inset: 0;
       display: none;
       place-items: center;
+      grid-template-columns: minmax(0, 1fr);
       background: rgba(17, 24, 39, 0.58);
       z-index: 80;
       padding: 18px;
@@ -686,6 +689,7 @@
       inset: 0;
       display: none;
       place-items: center;
+      grid-template-columns: minmax(0, 1fr);
       background: rgba(17, 24, 39, 0.62);
       z-index: 90;
       padding: 18px;
@@ -759,6 +763,7 @@
 
     .captcha-modal {
       width: min(460px, 100%);
+      max-width: 100%;
       border: 1px solid rgba(215, 222, 234, .9);
       border-radius: 4px;
       background: #fff;
@@ -943,6 +948,17 @@
       .captcha-title { font-size: 17px; }
     }
 
+    @media (max-width: 1160px) {
+      button, .link-btn { min-height: 44px; }
+      input, select { min-height: 44px; font-size: 16px; }
+      .password-toggle { width: 44px; height: 44px; min-height: 44px; }
+      .agreement-check { min-height: 44px; }
+      .text-link { min-height: 44px; padding: 8px 0; vertical-align: middle; }
+      .captcha-close, .captcha-icon-btn { width: 44px; height: 44px; min-height: 44px; }
+      .captcha-drag { height: 44px; }
+      .captcha-handle { height: 44px; min-height: 44px; top: 0; }
+    }
+
     @media (max-width: 980px) {
       header, .layout { grid-template-columns: 1fr; }
       .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -951,16 +967,40 @@
       .app-nav { justify-content: flex-start; }
     }
 
-    @media (max-width: 620px) {
+    @media (max-width: 900px) {
+      .shell {
+        margin: 12px auto;
+        padding: 0 12px calc(28px + env(safe-area-inset-bottom, 0px));
+      }
+      header { gap: 12px; padding-bottom: 14px; margin-bottom: 14px; }
       h1 { font-size: 28px; }
+      .app-nav {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        padding: 8px;
+      }
+      .app-nav .primary { grid-column: 1 / -1; }
       .cards { grid-template-columns: 1fr; }
       .plan-rule-list { grid-template-columns: 1fr; }
       .metric-grid { grid-template-columns: 1fr; }
-      .account-actions, .tabs, .input-row { grid-template-columns: 1fr; }
-      button, .link-btn { min-height: 44px; }
-      input, select { min-height: 46px; font-size: 16px; }
+      .account-actions, .input-row { grid-template-columns: 1fr; }
+      .tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .tabs:has(#adminTabBtn:not(.hidden)) { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      button, .link-btn { min-height: 48px; }
+      input, select { min-height: 48px; font-size: 16px; }
       .password-field input { padding-right: 56px; }
       .password-toggle { width: 44px; height: 44px; min-height: 44px; }
+      .agreement-check { min-height: 48px; align-items: center; }
+      .agreement-check input { width: 22px; height: 22px; min-height: 22px; margin-top: 0; }
+      .text-link { min-height: 44px; padding: 8px 0; vertical-align: middle; }
+      .captcha-close { width: 44px; height: 44px; min-height: 44px; }
+      .captcha-icon-btn { width: 44px; height: 44px; min-height: 44px; }
+      .captcha-drag { height: 48px; }
+      .captcha-handle { height: 48px; min-height: 48px; top: 0; }
+      .agreement-backdrop, .captcha-backdrop { padding: 12px; }
+      .agreement-modal { max-height: calc(100dvh - 24px); }
+      .agreement-head, .agreement-actions { padding: 12px 14px; }
     }
   </style>
   <link rel="stylesheet" href="/static/wewe.css?v=20261123-entitlements1" />
@@ -1518,12 +1558,18 @@
       if ($("registerBtn") && registerAgreement) $("registerBtn").disabled = !registerAgreement.checked;
     }
 
+    function syncBodyModalLock() {
+      const hasOpenModal = Boolean(document.querySelector(".captcha-backdrop.active, .agreement-backdrop.active"));
+      document.body.classList.toggle("modal-open", hasOpenModal);
+    }
+
     function openAgreement(kind) {
       const doc = AGREEMENT_DOCUMENTS[kind] || AGREEMENT_DOCUMENTS.terms;
       $("agreementTitle").textContent = doc.title;
       $("agreementContent").innerHTML = doc.html;
       $("agreementBackdrop").classList.add("active");
       $("agreementBackdrop").setAttribute("aria-hidden", "false");
+      syncBodyModalLock();
       $("agreementContent").scrollTop = 0;
       $("agreementConfirmBtn").focus();
     }
@@ -1531,6 +1577,7 @@
     function closeAgreement() {
       $("agreementBackdrop").classList.remove("active");
       $("agreementBackdrop").setAttribute("aria-hidden", "true");
+      syncBodyModalLock();
     }
 
     function initAgreementControls() {
@@ -1548,6 +1595,7 @@
         if (event.key === "Escape" && $("agreementBackdrop").classList.contains("active")) closeAgreement();
       });
       updateAgreementButtons();
+      syncBodyModalLock();
     }
 
     function formatNumber(value) {
@@ -1767,6 +1815,7 @@
       }
       $("captchaBackdrop").classList.add("active");
       $("captchaBackdrop").setAttribute("aria-hidden", "false");
+      syncBodyModalLock();
       await loadCaptchaChallenge(phone);
     }
 
@@ -1776,6 +1825,7 @@
       $("captchaBackdrop").classList.remove("active");
       $("captchaBackdrop").setAttribute("aria-hidden", "true");
       document.querySelector(".captcha-modal")?.classList.remove("loading", "verifying");
+      syncBodyModalLock();
     }
 
     async function loadCaptchaChallenge(phone = $("registerPhone").value.trim()) {

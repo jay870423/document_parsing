@@ -35,7 +35,7 @@ def test_console_error_feedback_is_visible_and_reads_response_body_once():
     assert "env(safe-area-inset-top, 0px)" in active_notice_css
     assert 'box.setAttribute("role", level === "err" ? "alert" : "status")' in html
 
-    mobile_css = html.split("@media (max-width: 620px) {", 1)[1].split("</style>", 1)[0]
+    mobile_css = html.split("@media (max-width: 900px) {", 1)[1].split("</style>", 1)[0]
     assert "button, .link-btn" in mobile_css
     assert "input, select" in mobile_css
     assert ".password-toggle" in mobile_css

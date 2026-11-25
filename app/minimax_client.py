@@ -141,6 +141,26 @@ class MiniMaxChatClient:
         self.base_url = _messages_url(settings.anthropic_base_url)
         self.max_tokens = settings.rag_answer_max_tokens
 
+    def generate_text(
+        self, system_prompt: str, user_prompt: str,
+        temperature: float = 0.2, max_tokens: int | None = None,
+    ) -> str:
+        """Generate with caller-owned prompts through the Anthropic protocol."""
+        if not self.api_key:
+            raise ValueError("ANTHROPIC_API_KEY is required for answer generation.")
+        payload = {
+            "model": self.model,
+            "system": system_prompt,
+            "messages": [{"role": "user", "content": user_prompt}],
+            "temperature": temperature,
+            "max_tokens": int(max_tokens or self.max_tokens),
+        }
+        resp = requests.post(
+            self.base_url, headers=_headers(self.api_key), json=payload, timeout=90,
+        )
+        _raise_for_status_with_details(resp)
+        return _extract_text(resp.json())
+
     def answer_with_context(self, question: str, hits: list[dict]) -> str:
         if not self.api_key:
             raise ValueError("ANTHROPIC_API_KEY is required for answer generation.")

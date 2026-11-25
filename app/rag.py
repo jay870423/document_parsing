@@ -216,6 +216,28 @@ class DoubaoChatClient:
         self.base_url = settings.ark_base_url.rstrip("/") + "/chat/completions"
         self.max_tokens = settings.rag_answer_max_tokens
 
+    def generate_text(
+        self, system_prompt: str, user_prompt: str,
+        temperature: float = 0.2, max_tokens: int | None = None,
+    ) -> str:
+        """Generate with caller-owned prompts while preserving the provider adapter."""
+        if not self.api_key:
+            raise ValueError("ARK_API_KEY is required for answer generation.")
+        payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            "temperature": temperature,
+            "max_tokens": int(max_tokens or self.max_tokens),
+        }
+        headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
+        resp = requests.post(self.base_url, headers=headers, json=payload, timeout=90)
+        _raise_for_status_with_details(resp)
+        data = resp.json()
+        return str(data["choices"][0]["message"]["content"])
+
     def answer_with_context(self, question: str, hits: list[dict]) -> str:
         if not self.api_key:
             raise ValueError("ARK_API_KEY is required for answer generation.")

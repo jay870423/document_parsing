@@ -1,0 +1,198 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#102a2d">
+  <title>内容增长工作台 · 文档解析智能助手</title>
+  <link rel="stylesheet" href="/static/growth.css?v=20261124-mvp1">
+  <script src="/static/growth.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand-block">
+      <a class="brand" href="/" aria-label="返回开放平台首页">循证内容增长</a>
+      <p>来源可追溯，草稿可编辑，AI 不自动发布</p>
+    </div>
+    <nav class="header-links" aria-label="产品导航">
+      <a href="/app">文档处理</a>
+      <a href="/">账号与套餐</a>
+    </nav>
+  </header>
+
+  <main class="shell">
+    <section class="context-bar" aria-label="当前工作上下文">
+      <label for="knowledgeBaseSelect">当前知识库</label>
+      <select id="knowledgeBaseSelect" aria-label="选择知识库"></select>
+      <span id="quotaBadge" class="quota-badge">正在读取额度</span>
+    </section>
+
+    <div id="recoveryStack" class="notice-stack">
+      <div id="notice" class="notice" role="status" aria-live="polite" aria-atomic="true"></div>
+      <button id="refreshWorkspaceBtn" class="secondary refresh-action" type="button" hidden>已扣费 · 仅刷新恢复（不重复扣费）</button>
+    </div>
+    <div id="busyBar" class="busy-bar" role="status" aria-live="polite" hidden></div>
+
+    <section id="setupView" class="view" aria-labelledby="setupHeading">
+      <div class="section-heading">
+        <div><span class="eyebrow">01 · 账号底座</span><h1 id="setupHeading">先认识你的读者与表达</h1></div>
+        <span class="free-label">配置与录入免费</span>
+      </div>
+
+      <div class="two-column">
+        <section class="card">
+          <h2>账号定位</h2>
+          <p class="hint">这些信息会进入选题和写作提示词，请具体描述，不要填写未经验证的效果承诺。</p>
+          <form id="profileForm" class="form-stack">
+            <label for="audienceInput">目标读者</label>
+            <textarea id="audienceInput" rows="3" maxlength="1000" placeholder="例如：关注 3—6 年级数学学习方法的小学家长"></textarea>
+            <label for="goalInput">内容目标</label>
+            <textarea id="goalInput" rows="2" maxlength="1000" placeholder="例如：建立专业信任，帮助家长理解产品适用场景"></textarea>
+            <label for="ctaInput">行动引导</label>
+            <input id="ctaInput" maxlength="1000" placeholder="例如：文末体验文档解析工作台">
+            <label for="forbiddenInput">禁用表达与红线</label>
+            <textarea id="forbiddenInput" rows="3" maxlength="2000" placeholder="例如：不承诺提分，不编造专家身份，不制造教育焦虑"></textarea>
+            <button class="primary" type="submit">保存账号定位</button>
+          </form>
+        </section>
+
+        <section class="card">
+          <h2>本人历史文章</h2>
+          <p class="hint">只用于学习你的表达习惯。至少录入一篇、正文不少于 100 字；建议积累 3 篇以上再确认风格。</p>
+          <form id="ownArticleForm" class="form-stack">
+            <label for="ownTitleInput">文章标题</label>
+            <input id="ownTitleInput" required maxlength="500" placeholder="输入已发表文章标题">
+            <label for="ownUrlInput">原文链接（可选）</label>
+            <input id="ownUrlInput" type="url" maxlength="2000" placeholder="https://mp.weixin.qq.com/...">
+            <label for="ownPublishedInput">发布日期（可选）</label>
+            <input id="ownPublishedInput" type="date">
+            <label for="ownBodyInput">文章正文</label>
+            <textarea id="ownBodyInput" required minlength="100" rows="9" placeholder="粘贴本人文章正文，建议保留原有小标题和段落"></textarea>
+            <button class="secondary" type="submit">保存本人文章</button>
+          </form>
+          <div id="ownArticleList" class="compact-list"></div>
+        </section>
+      </div>
+
+      <section class="card style-card">
+        <div class="card-title-row">
+          <div><h2>写作风格</h2><p class="hint">AI 只生成风格草稿，必须人工确认激活后才用于成稿。</p></div>
+          <button id="generateStyleBtn" class="primary cost-button" type="button">分析风格 · 成功扣 1 次</button>
+        </div>
+        <div class="style-grid">
+          <div><h3>已激活风格</h3><div id="activeStyleCard" class="style-output muted-box">尚未激活</div></div>
+          <div><h3>待确认风格</h3><div id="draftStyleCard" class="style-output muted-box">尚未生成</div></div>
+        </div>
+        <button id="activateStyleBtn" class="secondary" type="button" hidden>确认并激活此风格（免费）</button>
+      </section>
+    </section>
+
+    <section id="briefView" class="view" aria-labelledby="briefHeading" hidden>
+      <div class="section-heading">
+        <div><span class="eyebrow">02 · 选题证据</span><h1 id="briefHeading">从已有内容里找到可写角度</h1></div>
+        <span class="cost-label">成功生成扣 1 次</span>
+      </div>
+      <section class="card">
+        <div class="boundary-note"><strong>分析边界：</strong>只能使用当前账号、当前知识库的文章。推广模式仅观察可见内容要素，不等同于真实阅读或转化效果分析。</div>
+        <form id="briefForm" class="form-stack">
+          <label for="briefFocusInput">本次关注方向</label>
+          <textarea id="briefFocusInput" rows="3" maxlength="2000" placeholder="例如：围绕家长如何整理错题，找 3 个不制造焦虑的选题"></textarea>
+          <label for="analysisModeSelect">分析模式</label>
+          <select id="analysisModeSelect">
+            <option value="structure">内容结构分析</option>
+            <option value="promotion">推广要素观察（无真实效果数据）</option>
+          </select>
+          <fieldset class="reference-fieldset">
+            <legend>参考文章 <span class="hint">不勾选则使用近期已入库文章</span></legend>
+            <div id="referenceList" class="reference-list"></div>
+          </fieldset>
+          <button id="generateBriefBtn" class="primary" type="submit">生成循证选题简报 · 1 次</button>
+        </form>
+      </section>
+      <div id="briefResults" class="results-stack"></div>
+    </section>
+
+    <section id="writeView" class="view" aria-labelledby="writeHeading" hidden>
+      <div class="section-heading">
+        <div><span class="eyebrow">03 · 人工主笔</span><h1 id="writeHeading">生成草稿，再由你确认事实与表达</h1></div>
+        <span class="cost-label">成功生成扣 1 次</span>
+      </div>
+      <section class="card">
+        <form id="draftForm" class="form-stack">
+          <div id="selectedBriefNote" class="selection-note" hidden></div>
+          <label for="draftTopicInput">写作主题</label>
+          <textarea id="draftTopicInput" rows="2" maxlength="2000" required placeholder="填写主题，或从选题简报中选择"></textarea>
+          <div class="form-grid">
+            <div><label for="draftLengthSelect">目标篇幅</label><select id="draftLengthSelect"><option value="800">约 800 字</option><option value="1200" selected>约 1200 字</option><option value="1800">约 1800 字</option><option value="2500">约 2500 字</option></select></div>
+            <div><label for="draftInstructionsInput">补充要求</label><input id="draftInstructionsInput" maxlength="2000" placeholder="例如：多用真实教学场景"></div>
+          </div>
+          <button id="generateDraftBtn" class="primary" type="submit">生成证据化草稿 · 1 次</button>
+        </form>
+      </section>
+
+      <div class="write-layout">
+        <aside class="card draft-sidebar"><h2>我的文章草稿</h2><div id="draftList" class="compact-list"></div></aside>
+        <section id="draftEditor" class="card editor-card" hidden>
+          <div class="editor-heading"><div><span class="eyebrow">可编辑草稿</span><h2>人工审校区</h2></div><span id="draftStatus" class="status-pill">draft</span></div>
+          <label for="editorTitleInput">标题</label>
+          <input id="editorTitleInput" maxlength="500">
+          <div id="titleOptions" class="title-options"></div>
+          <label for="editorBodyInput">正文 Markdown</label>
+          <textarea id="editorBodyInput" class="body-editor" rows="22"></textarea>
+          <div class="editor-actions">
+            <button id="saveDraftBtn" class="primary" type="button">保存修改（免费）</button>
+            <div class="export-group" aria-label="导出草稿">
+              <a id="exportMarkdownLink" class="button-link secondary" href="#">Markdown</a>
+              <a id="exportTxtLink" class="button-link secondary" href="#">TXT</a>
+              <a id="exportHtmlLink" class="button-link secondary" href="#">HTML</a>
+            </div>
+          </div>
+          <section class="evidence-panel"><h3>引用与来源</h3><div id="citationList"></div></section>
+          <section class="evidence-panel warning-panel"><h3>待核实与风险</h3><div id="unresolvedFacts"></div><div id="riskNotes"></div></section>
+        </section>
+      </div>
+    </section>
+
+    <section id="metricsView" class="view" aria-labelledby="metricsHeading" hidden>
+      <div class="section-heading">
+        <div><span class="eyebrow">04 · 真实反馈</span><h1 id="metricsHeading">导入实际数据，积累可比较样本</h1></div>
+        <span class="free-label">录入与查看免费</span>
+      </div>
+      <div class="boundary-note"><strong>描述性指标：</strong>这里只计算已导入数据的比率，不把内容结构与阅读、关注或付费结果解释为因果关系。样本较小时尤其需要谨慎。</div>
+      <section class="card">
+        <h2>录入公众号后台数据</h2>
+        <form id="metricForm" class="form-stack">
+          <div class="form-grid three-columns">
+            <div><label for="metricArticleSelect">本人文章</label><select id="metricArticleSelect" required></select></div>
+            <div><label for="metricDateInput">统计截止日期</label><input id="metricDateInput" type="date" required></div>
+            <div><label for="metricWindowSelect">观察窗口</label><select id="metricWindowSelect"><option value="24h">24 小时</option><option value="72h">72 小时</option><option value="7d" selected>7 天</option></select></div>
+          </div>
+          <div class="form-grid three-columns">
+            <div><label for="metricAccountInput">公众号账号标识</label><input id="metricAccountInput" required maxlength="200" placeholder="例如：公众号名称或内部账号名"></div>
+            <div><label for="metricSourceInput">数据来源</label><input id="metricSourceInput" required maxlength="500" placeholder="例如：公众号后台导出 + 自有订单表"></div>
+            <div><label for="metricCampaignInput">活动标识（可选）</label><input id="metricCampaignInput" maxlength="200" placeholder="用于核对跨系统数据"></div>
+          </div>
+          <div class="metric-input-grid">
+            <div><label for="readsInput">阅读数</label><input id="readsInput" type="number" min="0" step="1" inputmode="numeric"></div>
+            <div><label for="sharesInput">分享数</label><input id="sharesInput" type="number" min="0" step="1" inputmode="numeric"></div>
+            <div><label for="followsInput">新增关注</label><input id="followsInput" type="number" min="0" step="1" inputmode="numeric"></div>
+            <div><label for="clicksInput">落地页点击</label><input id="clicksInput" type="number" min="0" step="1" inputmode="numeric"></div>
+            <div><label for="registrationsInput">注册数</label><input id="registrationsInput" type="number" min="0" step="1" inputmode="numeric"></div>
+            <div><label for="paymentsInput">付费数</label><input id="paymentsInput" type="number" min="0" step="1" inputmode="numeric"></div>
+          </div>
+          <p class="hint">同一文章、日期和观察窗口重复保存会覆盖旧数据。没有对应数据时请留空（表示未知）；明确为 0 时才填 0，不做估算。</p>
+          <button class="primary" type="submit">保存真实效果数据</button>
+        </form>
+      </section>
+      <div id="metricList" class="metrics-list"></div>
+    </section>
+  </main>
+
+  <nav class="mobile-tabbar" aria-label="内容增长功能导航">
+    <button class="active" type="button" data-view="setupView" aria-selected="true"><span aria-hidden="true">◎</span>账号风格</button>
+    <button type="button" data-view="briefView" aria-selected="false"><span aria-hidden="true">⌕</span>选题简报</button>
+    <button type="button" data-view="writeView" aria-selected="false"><span aria-hidden="true">✎</span>文章成稿</button>
+    <button type="button" data-view="metricsView" aria-selected="false"><span aria-hidden="true">↗</span>效果数据</button>
+  </nav>
+</body>
+</html>

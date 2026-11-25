@@ -16,6 +16,8 @@ from pydantic import BaseModel, Field
 
 from app.billing import ApiKeyContext, BillingStore, UserContext, estimate_tokens, hash_lookup_secret, normalize_phone, utc_now
 from app.config import Settings, get_env_file_path, get_settings
+from app.content_growth_api import build_content_growth_router
+from app.content_growth_store import ContentGrowthStore
 from app.pipeline import DocumentPipeline
 from app.sms import TencentSmsClient, friendly_sms_error
 from app.wewe_api import build_wewe_router
@@ -41,6 +43,7 @@ billing_store: BillingStore = BillingStore(settings)
 billing_store.bootstrap_admin(settings.bootstrap_admin_email, settings.bootstrap_admin_password)
 
 wewe_store: WeWeStore = WeWeStore(settings)
+content_growth_store: ContentGrowthStore = ContentGrowthStore(settings, auto_migrate=False)
 wewe_client: WeWeRssClient = WeWeRssClient(
     base_url=settings.wewe_base_url,
     auth_code=settings.wewe_auth_code,
@@ -620,6 +623,16 @@ app.include_router(
         billing_store=billing_store,
     )
 )
+app.include_router(
+    build_content_growth_router(
+        current_user=current_user,
+        store=content_growth_store,
+        reference_store=wewe_store,
+        chat=pipeline.chat,
+        billing_store=billing_store,
+        resolve_kb=_resolve_user_knowledge_base,
+    )
+)
 
 
 @app.on_event("startup")
@@ -731,6 +744,11 @@ def console() -> FileResponse:
 @app.get("/app")
 def index() -> FileResponse:
     return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/growth")
+def growth() -> FileResponse:
+    return FileResponse(STATIC_DIR / "growth.html")
 
 
 @app.get("/docs", include_in_schema=False)

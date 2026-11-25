@@ -65,12 +65,19 @@ APP_ENV_FILE=/home/ubuntu/document_parsing/.env \
   --sqlite /path/to/consistent-backup/data/app.db \
   --report /path/to/migration-verified.json
 
-# 5. 只重建 doc app。
+# 5. 显式执行本次内容增长表的加法迁移；应用导入/启动不会自动建这些表。
+#    该步骤只建缺失表/索引，不清空、不删除既有数据，可重复执行。
 cd /home/ubuntu/document_parsing
+APP_ENV_FILE=/home/ubuntu/document_parsing/.env \
+  python3 scripts/migrate_content_growth.py
+APP_ENV_FILE=/home/ubuntu/document_parsing/.env \
+  python3 scripts/migrate_content_growth.py --check
+
+# 6. 只重建 doc app。
 sudo docker compose build app
 sudo docker compose up -d --no-deps app
 
-# 6. doc 匿名边界 + MySQL/Qdrant + study 首页。
+# 7. doc 匿名边界 + MySQL/Qdrant + study 首页。
 scripts/verify_doc_study.sh
 ```
 

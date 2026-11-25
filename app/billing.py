@@ -117,10 +117,12 @@ PLAN_CAPABILITIES = (
     "文档解析、向量入库与知识库问答",
     "公众号 / RSS 采集源与定时采集",
     "采集文章检索与图片语义检索",
+    "循证公众号选题简报、风格确认与文章草稿",
 )
 PLAN_BILLING_RULES = (
     "文档解析、知识库检索/问答、图片语义检索：每次成功调用扣 1 次",
     "公众号订阅并采集、手动采集、定时采集：每个成功或部分成功任务扣 1 次",
+    "内容增长的风格分析、选题简报、证据化成稿：每次成功生成扣 1 次，失败自动退回",
     "采集任务或图片检索失败自动退回本次预留额度；仅绑定账号不扣费",
     "查看已采集来源、文章、历史任务和导出订阅不扣费",
 )
@@ -137,6 +139,14 @@ class BillingStore:
     def connect(self) -> Iterator[Connection]:
         with mysql_connect(self.settings) as conn:
             yield conn
+
+    @contextmanager
+    def _using_connection(self, conn: Connection | None) -> Iterator[Connection]:
+        if conn is not None:
+            yield conn
+        else:
+            with self.connect() as owned:
+                yield owned
 
     def init_db(self) -> None:
         with self.connect() as conn:
@@ -839,7 +849,9 @@ class BillingStore:
             raise PermissionError("当前订阅调用次数已用完")
         return sub
 
-    def reserve_call(self, user_id: int, call_count: int = 1) -> CallReservation:
+    def reserve_call(
+        self, user_id: int, call_count: int = 1, *, conn: Connection | None = None,
+    ) -> CallReservation:
         """Persistently reserve quota before invoking a paid dependency."""
         if call_count < 1:
             raise ValueError("call_count must be positive")
@@ -847,8 +859,8 @@ class BillingStore:
         # older than the conservative TTL are eligible; normal calls are untouched.
         self.reconcile_abandoned_reservations()
         now = to_iso(utc_now())
-        with self.connect() as conn:
-            return self._reserve_call_in_connection(conn, user_id, call_count, now)
+        with self._using_connection(conn) as connection:
+            return self._reserve_call_in_connection(connection, user_id, call_count, now)
 
     def consume_call(
         self,
@@ -863,6 +875,7 @@ class BillingStore:
         meta: dict | None = None,
         call_count: int = 1,
         reservation: CallReservation | None = None,
+        conn: Connection | None = None,
     ) -> None:
         """Settle a persistent reservation, or charge a successful legacy call."""
         if reservation is not None:
@@ -874,10 +887,11 @@ class BillingStore:
                 raise ValueError("persistent reservation id is required")
         now = to_iso(utc_now())
         successful_billing = 200 <= int(status_code) < 400 and call_count > 0
+        own_connection = conn is None
         if reservation is not None:
-            with self.connect() as conn:
+            with self._using_connection(conn) as connection:
                 state = "succeeded" if successful_billing else "failed"
-                claimed = conn.execute(
+                claimed = connection.execute(
                     """UPDATE call_reservations
                        SET state = ?, settled_at = ?
                        WHERE reservation_id = ? AND user_id = ? AND subscription_id = ?
@@ -893,7 +907,7 @@ class BillingStore:
                 if claimed.rowcount != 1:
                     raise RuntimeError("call reservation already settled")
                 if not successful_billing:
-                    released = conn.execute(
+                    released = connection.execute(
                         """UPDATE subscriptions SET used_calls = used_calls - ?
                            WHERE id = ? AND used_calls >= ?""",
                         (
@@ -905,7 +919,7 @@ class BillingStore:
                     if released.rowcount != 1:
                         raise RuntimeError("quota reservation ledger is inconsistent")
                 self._insert_usage_event(
-                    conn,
+                    connection,
                     user_id,
                     api_key_id,
                     endpoint,
@@ -917,14 +931,15 @@ class BillingStore:
                     meta,
                     reservation.call_count if successful_billing else 0,
                 )
-            reservation.settled = True
+            if own_connection:
+                reservation.settled = True
             return
 
         # Compatibility path for older callers. Only successful calls consume
         # quota, and the conditional UPDATE closes the old overdraw race.
-        with self.connect() as conn:
+        with self._using_connection(conn) as connection:
             if successful_billing:
-                updated = conn.execute(
+                updated = connection.execute(
                     """UPDATE subscriptions
                        SET used_calls = used_calls + ?
                        WHERE id = (
@@ -940,7 +955,7 @@ class BillingStore:
                 if updated.rowcount != 1:
                     raise PermissionError("套餐剩余调用次数不足")
             self._insert_usage_event(
-                conn,
+                connection,
                 user_id,
                 api_key_id,
                 endpoint,
